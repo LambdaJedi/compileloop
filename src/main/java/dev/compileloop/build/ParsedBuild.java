@@ -14,9 +14,11 @@ public record ParsedBuild(
      * One javac error. {@code file} uses forward slashes with no leading slash
      * before a Windows drive letter (Maven prints {@code /C:/Users/...}).
      * {@code message} may span several lines (e.g. "cannot find symbol" plus
-     * its symbol/location lines), joined with '\n'.
+     * its symbol/location lines), joined with '\n'. {@code rawExcerpt} is the
+     * original log text for this error, unmodified.
      */
-    public record CompileError(String file, int line, int column, String message) {
+    public record CompileError(String file, int line, int column, String message,
+                               DiagnosticCategory category, String rawExcerpt) {
     }
 
     /**
@@ -24,9 +26,11 @@ public record ParsedBuild(
      * "ERROR" (unexpected exception). {@code testMethod} is empty for
      * class-level failures. {@code line} is the line in the test class where
      * the failure surfaced, or -1 if the stack trace did not show one.
+     * {@code rawExcerpt} is the header, message and the first stack frames as logged.
      */
     public record TestFailure(String testClass, String testMethod, String kind,
-                              String message, int line) {
+                              String message, int line,
+                              DiagnosticCategory category, String rawExcerpt) {
     }
 
     public record TestSummary(int run, int failures, int errors, int skipped) {

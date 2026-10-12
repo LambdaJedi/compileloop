@@ -5,6 +5,7 @@ import dev.compileloop.build.BuildResult;
 import dev.compileloop.build.ParsedBuild;
 import dev.compileloop.build.ParsedBuild.CompileError;
 import dev.compileloop.build.ParsedBuild.TestFailure;
+import dev.compileloop.build.ReportWriter;
 
 import java.io.IOException;
 import java.io.PrintStream;
@@ -66,6 +67,7 @@ public final class Cli {
         }
 
         Path project = null;
+        boolean json = false;
         int timeoutSeconds = DEFAULT_TIMEOUT_SECONDS;
         for (int i = 1; i < args.length; i++) {
             String a = args[i];
@@ -87,6 +89,8 @@ public final class Cli {
                 if (timeoutSeconds <= 0) {
                     return usageError("--timeout must be greater than zero.");
                 }
+            } else if (a.equals("--json")) {
+                json = true;
             } else if (a.startsWith("-")) {
                 return usageError("Unknown option: " + a);
             } else if (project == null) {
@@ -106,10 +110,20 @@ public final class Cli {
             err.println("Could not run the build: " + e.getMessage());
             return EXIT_INFRA;
         }
-        return report(result, timeoutSeconds);
+        return json ? reportJson(result) : report(result, timeoutSeconds);
     }
 
     // ---- reporting --------------------------------------------------------
+
+    private int reportJson(BuildResult r) {
+        out.println(ReportWriter.toJson(r));
+        return switch (r.outcome()) {
+            case PASS -> EXIT_PASS;
+            case FAIL -> EXIT_FAIL;
+            case TIMEOUT -> EXIT_TIMEOUT;
+            default -> EXIT_INFRA;
+        };
+    }
 
     private int report(BuildResult r, int timeoutSeconds) {
         out.println("CompileLoop: " + r.commandLabel());
@@ -186,9 +200,16 @@ public final class Cli {
     }
 
     private void printLog(BuildResult r) {
-        if (r.logPath() != null) {
+        if (r.runDirectory() != null) {
             out.println();
-            out.println("Full log: " + r.logPath());
+            out.println("Run:    " + r.runId());
+            if (r.logPath() != null) {
+                out.println("Log:    " + r.logPath());
+            }
+            out.println("Report: " + r.runDirectory().resolve(ReportWriter.FILE_NAME));
+        } else if (r.logPath() != null) {
+            out.println();
+            out.println("Log:    " + r.logPath());
         }
     }
 
@@ -224,11 +245,12 @@ public final class Cli {
         to.println("CompileLoop - run a Maven project's tests and explain what failed.");
         to.println();
         to.println("Usage:");
-        to.println("  compileloop test <project-dir> [--timeout <seconds>]");
+        to.println("  compileloop test <project-dir> [--timeout <seconds>] [--json]");
         to.println("  compileloop --help");
         to.println();
         to.println("Options:");
         to.println("  --timeout <seconds>   stop the build after this long (default " + DEFAULT_TIMEOUT_SECONDS + ")");
+        to.println("  --json                print the JSON report to stdout instead of the text summary");
         to.println();
         to.println("Exit codes:");
         to.println("  0  build passed");

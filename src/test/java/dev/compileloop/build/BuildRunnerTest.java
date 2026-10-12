@@ -94,6 +94,38 @@ class BuildRunnerTest {
         assertEquals(1, r.parsed().testSummary().orElseThrow().run());
         assertFalse(r.parsed().hasCompileErrors());
         assertFalse(r.parsed().hasTestFailures());
+
+        // Per-run artifacts: target/compileloop/runs/<runId>/{build.log,report.json}
+        assertNotNull(r.runId());
+        assertTrue(r.runId().matches("\\d{8}T\\d{6}Z-[0-9a-f]{6}"), r.runId());
+        assertEquals(r.runDirectory().getFileName().toString(), r.runId());
+        assertEquals(r.runDirectory().resolve("build.log"), r.logPath());
+        Path report = r.runDirectory().resolve("report.json");
+        assertTrue(Files.isRegularFile(report));
+        String json = Files.readString(report);
+        assertTrue(json.contains("\"outcome\": \"PASS\""));
+        assertTrue(json.contains(r.runId()));
+    }
+
+    @Test
+    void directoryWithoutPomIsStartError() throws IOException {
+        Path empty = Files.createDirectories(tmp.resolve("no-pom"));
+
+        BuildResult r = new BuildRunner().runMavenTests(empty);
+
+        assertEquals(BuildOutcome.START_ERROR, r.outcome());
+        assertTrue(r.outputTail().contains("pom.xml"));
+        assertTrue(r.infrastructureFailure());
+        assertEquals(null, r.runDirectory(), "no artifacts for a build that never started");
+    }
+
+    @Test
+    void runIdsAreWellFormedAndDistinct() {
+        // Uniqueness is enforced by atomic directory creation, not by the random suffix.
+        String id = BuildRunner.newRunId(java.time.Instant.parse("2026-10-12T11:55:00Z"));
+
+        assertTrue(id.startsWith("20261012T115500Z-"), id);
+        assertTrue(id.matches("\\d{8}T\\d{6}Z-[0-9a-f]{6}"), id);
     }
 
     @Test

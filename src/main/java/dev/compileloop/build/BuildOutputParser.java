@@ -37,6 +37,7 @@ public final class BuildOutputParser {
     //         at fx.CalcTest.adds(CalcTest.java:5)
     private static final Pattern STACK_FRAME =
             Pattern.compile("^\\s+at (\\S+)\\.[^.(\\s]+\\([^:)]+:(\\d+)\\)");
+    private static final int RAW_STACK_FRAMES = 8;
     private static final Pattern STACK_START = Pattern.compile("^\\s+at \\S");
 
     // [ERROR] Tests run: 2, Failures: 1, Errors: 0, Skipped: 0   (no "Time elapsed" => grand total)
@@ -90,9 +91,10 @@ public final class BuildOutputParser {
             Matcher m = COMPILE_ERROR.matcher(line);
             if (m.matches()) {
                 flush(cur, out);
-                cur = Pending.of(m);
+                cur = Pending.of(m, line);
             } else if (cur != null && !line.startsWith("[") && !line.isBlank()) {
                 cur.message.append('\n').append(line.trim());
+                cur.raw.append('\n').append(line);
             }
         }
         flush(cur, out);
@@ -106,12 +108,13 @@ public final class BuildOutputParser {
             Matcher m = COMPILE_ERROR.matcher(line);
             if (m.matches()) {
                 flush(cur, out);
-                cur = Pending.of(m);
+                cur = Pending.of(m, line);
                 continue;
             }
             Matcher c = SUMMARY_CONTINUATION.matcher(line);
             if (cur != null && c.matches()) {
                 cur.message.append('\n').append(c.group(1).trim());
+                cur.raw.append('\n').append(line);
             } else {
                 flush(cur, out);
                 cur = null;
@@ -123,7 +126,9 @@ public final class BuildOutputParser {
 
     private static void flush(Pending p, Set<CompileError> out) {
         if (p != null) {
-            out.add(new CompileError(p.file, p.line, p.column, p.message.toString()));
+            String msg = p.message.toString();
+            out.add(new CompileError(p.file, p.line, p.column, msg,
+                    DiagnosticCategory.forCompileMessage(msg), p.raw.toString()));
         }
     }
 
@@ -132,17 +137,19 @@ public final class BuildOutputParser {
         final int line;
         final int column;
         final StringBuilder message;
+        final StringBuilder raw;
 
-        private Pending(String file, int line, int column, String firstLine) {
+        private Pending(String file, int line, int column, String firstLine, String rawLine) {
             this.file = file;
             this.line = line;
             this.column = column;
             this.message = new StringBuilder(firstLine);
+            this.raw = new StringBuilder(rawLine);
         }
 
-        static Pending of(Matcher m) {
+        static Pending of(Matcher m, String rawLine) {
             return new Pending(normalizePath(m.group(1)),
-                    Integer.parseInt(m.group(2)), Integer.parseInt(m.group(3)), m.group(4));
+                    Integer.parseInt(m.group(2)), Integer.parseInt(m.group(3)), m.group(4), rawLine);
         }
     }
 
@@ -166,6 +173,8 @@ public final class BuildOutputParser {
             String kind = h.group(2);
 
             StringBuilder message = new StringBuilder();
+            StringBuilder raw = new StringBuilder(lines[i]);
+            int rawFrames = 0;
             int failLine = -1;
             boolean inStack = false;
             i++;
@@ -176,6 +185,9 @@ public final class BuildOutputParser {
                 }
                 if (STACK_START.matcher(l).find()) {
                     inStack = true;
+                    if (rawFrames++ < RAW_STACK_FRAMES) {
+                        raw.append('\n').append(l);
+                    }
                     Matcher f = STACK_FRAME.matcher(l);
                     if (failLine < 0 && f.find() && isTestClass(f.group(1), id[0])) {
                         failLine = Integer.parseInt(f.group(2));
@@ -185,9 +197,13 @@ public final class BuildOutputParser {
                         message.append('\n');
                     }
                     message.append(l.trim());
+                    raw.append('\n').append(l);
                 }
             }
-            out.add(new TestFailure(id[0], id[1], kind, message.toString(), failLine));
+            DiagnosticCategory category = kind.equals("FAILURE")
+                    ? DiagnosticCategory.ASSERTION_FAILURE : DiagnosticCategory.TEST_ERROR;
+            out.add(new TestFailure(id[0], id[1], kind, message.toString(), failLine,
+                    category, raw.toString()));
         }
         return out;
     }

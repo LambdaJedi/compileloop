@@ -3,6 +3,11 @@ package dev.compileloop.build;
 import java.nio.file.Path;
 import java.time.Instant;
 
+/**
+ * Outcome of one build run. {@code runId} and {@code runDirectory} are null when
+ * the build never started (bad directory, no pom.xml, no Maven), because no
+ * artifacts exist for such a run.
+ */
 public record BuildResult(
         String commandLabel,
         BuildOutcome outcome,
@@ -12,7 +17,10 @@ public record BuildResult(
         long durationMillis,
         Path logPath,
         String outputTail,
-        ParsedBuild parsed
+        ParsedBuild parsed,
+        Path projectDirectory,
+        String runId,
+        Path runDirectory
 ) {
     public boolean passed() {
         return outcome == BuildOutcome.PASS;

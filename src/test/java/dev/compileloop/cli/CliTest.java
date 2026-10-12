@@ -57,7 +57,8 @@ class CliTest {
 
     private static BuildResult result(BuildOutcome outcome, int exit, String tail, ParsedBuild parsed) {
         return new BuildResult("mvn -B test", outcome, exit, outcome == BuildOutcome.TIMEOUT,
-                Instant.now(), 3700, Path.of("target/compileloop/build.log"), tail, parsed);
+                Instant.now(), 3700, Path.of("runs/20261012T100000Z-ab12cd/build.log"), tail, parsed,
+                Path.of("proj"), "20261012T100000Z-ab12cd", Path.of("runs/20261012T100000Z-ab12cd"));
     }
 
     // ---- usage ------------------------------------------------------------
@@ -112,7 +113,23 @@ class CliTest {
         assertEquals(0, code);
         assertTrue(out().contains("Result: PASS"));
         assertTrue(out().contains("Tests: 3 run, 0 failed, 0 errors, 1 skipped"));
-        assertTrue(out().contains("Full log:"));
+        assertTrue(out().contains("Run:    20261012T100000Z-ab12cd"));
+        assertTrue(out().contains("Log:    "));
+        assertTrue(out().contains("report.json"));
+    }
+
+    @Test
+    void jsonFlagPrintsReportAndKeepsExitCode() throws IOException {
+        String log = resource("compile-error.log");
+        BuildResult r = result(BuildOutcome.FAIL, 1, log, BuildOutputParser.parse(log));
+
+        int code = cliReturning(r).run(new String[]{"test", "p", "--json"});
+
+        assertEquals(Cli.EXIT_FAIL, code);
+        assertTrue(out().trim().startsWith("{"));
+        assertTrue(out().contains("\"outcome\": \"FAIL\""));
+        assertTrue(out().contains("\"category\": \"SYMBOL_NOT_FOUND\""));
+        assertFalse(out().contains("Compile errors ("), "no text summary in --json mode");
     }
 
     @Test
@@ -170,14 +187,15 @@ class CliTest {
     @Test
     void startErrorIsInfrastructureNotCodeFailure() {
         BuildResult r = new BuildResult("mvn -B test", BuildOutcome.START_ERROR, -1, false,
-                Instant.now(), 2, null, "Could not locate mvn, mvnw, or mvnw.cmd.", ParsedBuild.empty());
+                Instant.now(), 2, null, "Could not locate mvn, mvnw, or mvnw.cmd.", ParsedBuild.empty(),
+                Path.of("proj"), null, null);
 
         int code = cliReturning(r).run(new String[]{"test", "p"});
 
         assertEquals(Cli.EXIT_INFRA, code);
         assertTrue(out().contains("says nothing about the project's code"));
         assertTrue(out().contains("Could not locate mvn"));
-        assertFalse(out().contains("Full log:"));
+        assertFalse(out().contains("Report:"));
     }
 
     @Test

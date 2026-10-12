@@ -1,5 +1,7 @@
 # CompileLoop
 
+[![CI](https://github.com/LambdaJedi/compileloop/actions/workflows/ci.yml/badge.svg)](https://github.com/LambdaJedi/compileloop/actions/workflows/ci.yml)
+
 A self-testing, AI-assisted code repair engine for Maven projects, built as a free, open-source CLI.
 
 CompileLoop runs a project's build and tests, turns failures into structured diagnostics, (optionally) asks a local AI model to propose a bounded patch, verifies that patch in an isolated workspace, and reports exactly what happened.
@@ -14,7 +16,9 @@ Early development. The deterministic build-and-diagnose layer and a basic CLI wo
 |---|---|
 | Run `mvn -B test` safely (timeout, process-tree kill, bounded output, log file) | Done, tested |
 | Distinguish outcomes: `PASS`, `FAIL`, `TIMEOUT`, `START_ERROR`, `CANCELLED`, `INFRA_ERROR` | Done |
-| Parse Maven output into compile errors and test failures | Done, tested against real Windows output |
+| Parse Maven output into compile errors and test failures, with category and raw excerpt | Done, tested against real Windows output |
+| Per-run artifact folder (log + `report.json`), JSON and text reports | Done, tested |
+| Continuous integration (Linux and Windows) | Workflow added |
 | Command-line interface (`compileloop test <dir>`) | Done, tested |
 | AI patch proposal (optional, local model) | Not started |
 | Safe patch application in a disposable copy + re-verification | Not started |
@@ -56,7 +60,10 @@ Then point it at any Maven project:
 ```bash
 java -jar target/compileloop-0.1.0-SNAPSHOT.jar test path/to/maven/project
 java -jar target/compileloop-0.1.0-SNAPSHOT.jar test path/to/project --timeout 120
+java -jar target/compileloop-0.1.0-SNAPSHOT.jar test path/to/project --json
 ```
+
+`--json` prints the same report that is saved as `report.json` and keeps the same exit codes.
 
 Example output for a project with a compile error:
 
@@ -72,7 +79,9 @@ Compile errors (2):
     symbol:   method undefinedMethod()
     location: class fx.Broken
 
-Full log: C:\Users\me\proj\target\compileloop\build.log
+Run:    20261012T115500Z-3f9a1c
+Log:    C:\Users\me\proj\target\compileloop\runs\20261012T115500Z-3f9a1c\build.log
+Report: C:\Users\me\proj\target\compileloop\runs\20261012T115500Z-3f9a1c\report.json
 ```
 
 Exit codes: `0` build passed, `1` build failed (compile errors or failing tests), `2` timed out, `3` the build could not be run (for example Maven not found), `64` bad usage. A missing Maven is reported as exit `3`, never as a failing project.
@@ -96,7 +105,15 @@ for (var f : result.parsed().testFailures()) {
 }
 ```
 
-The full Maven output is written to `target/compileloop/build.log` inside the project being built.
+Every run writes its artifacts to its own folder inside the project being built:
+
+```
+target/compileloop/runs/<runId>/
+  build.log      full, unmodified Maven output
+  report.json    structured report (outcome, diagnostics, categories, raw excerpts)
+```
+
+`<runId>` is a UTC timestamp plus a random suffix, for example `20261012T115500Z-3f9a1c`. Runs are never overwritten. A build that never started (bad directory, no `pom.xml`, no Maven) creates no run folder.
 
 ## Design notes
 
@@ -105,6 +122,8 @@ The full Maven output is written to `target/compileloop/build.log` inside the pr
 - **The whole process tree is killed on timeout**, not just the parent.
 - **Infrastructure failures are never confused with broken source code.** A missing `mvn` is `START_ERROR`, not `FAIL`.
 - **The parser degrades quietly.** Unrecognised output yields "nothing found" rather than an exception.
+- **Reports never claim more than the evidence.** A failed build with nothing recognised says exactly that, and keeps the raw log; an infrastructure failure is labelled as one.
+- **Validated before launch.** The runner checks the directory and `pom.xml` exist before starting Maven.
 
 ## Roadmap
 
@@ -126,6 +145,8 @@ src/main/java/dev/compileloop/build/
   BuildOutcome.java       PASS / FAIL / TIMEOUT / START_ERROR / CANCELLED / INFRA_ERROR
   BuildOutputParser.java  Maven text -> compile errors, test failures, summary
   ParsedBuild.java        the structured result of parsing
+  DiagnosticCategory.java coarse, stable classification of each diagnostic
+  ReportWriter.java       builds report.json (no JSON library needed)
 src/test/resources/maven/ real Maven output captured on Windows, used as parser fixtures
 ```
 
