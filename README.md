@@ -8,14 +8,14 @@ CompileLoop runs a project's build and tests, turns failures into structured dia
 
 ## Status
 
-Early development. The deterministic build-and-diagnose layer works; the AI repair loop and the CLI do not exist yet.
+Early development. The deterministic build-and-diagnose layer and a basic CLI work; the AI repair loop does not exist yet.
 
 | Piece | State |
 |---|---|
 | Run `mvn -B test` safely (timeout, process-tree kill, bounded output, log file) | Done, tested |
 | Distinguish outcomes: `PASS`, `FAIL`, `TIMEOUT`, `START_ERROR`, `CANCELLED`, `INFRA_ERROR` | Done |
 | Parse Maven output into compile errors and test failures | Done, tested against real Windows output |
-| Command-line interface | Not started |
+| Command-line interface (`compileloop test <dir>`) | Done, tested |
 | AI patch proposal (optional, local model) | Not started |
 | Safe patch application in a disposable copy + re-verification | Not started |
 | Audit report per attempt | Not started |
@@ -43,9 +43,43 @@ mvn -B test
 
 The suite takes about 30 seconds. The `BuildRunnerTest` cases are integration tests that generate small throwaway Maven projects and run the real Maven against them.
 
+## Using the CLI
+
+Build the runnable jar once (skipping tests makes it quick):
+
+```bash
+mvn -B -DskipTests package
+```
+
+Then point it at any Maven project:
+
+```bash
+java -jar target/compileloop-0.1.0-SNAPSHOT.jar test path/to/maven/project
+java -jar target/compileloop-0.1.0-SNAPSHOT.jar test path/to/project --timeout 120
+```
+
+Example output for a project with a compile error:
+
+```
+CompileLoop: mvn -B test
+Result: FAIL, exit code 1 (3.7s)
+
+Compile errors (2):
+  C:/Users/me/proj/src/main/java/fx/Broken.java:3:13
+    incompatible types: java.lang.String cannot be converted to int
+  C:/Users/me/proj/src/main/java/fx/Broken.java:4:16
+    cannot find symbol
+    symbol:   method undefinedMethod()
+    location: class fx.Broken
+
+Full log: C:\Users\me\proj\target\compileloop\build.log
+```
+
+Exit codes: `0` build passed, `1` build failed (compile errors or failing tests), `2` timed out, `3` the build could not be run (for example Maven not found), `64` bad usage. A missing Maven is reported as exit `3`, never as a failing project.
+
 ## Using the library
 
-There is no CLI yet. The engine can be called from Java:
+The engine can also be called from Java:
 
 ```java
 BuildRunner runner = new BuildRunner();
@@ -83,6 +117,9 @@ AI-generated patches are proposals. They are never applied silently to your work
 ## Project layout
 
 ```
+src/main/java/dev/compileloop/cli/
+  Main.java               entry point for the jar
+  Cli.java                argument parsing and report formatting
 src/main/java/dev/compileloop/build/
   BuildRunner.java        runs Maven with timeout, draining and kill-tree
   BuildResult.java        outcome, exit code, log path, output tail, parsed diagnostics
@@ -94,4 +131,4 @@ src/test/resources/maven/ real Maven output captured on Windows, used as parser 
 
 ## License
 
-Not yet chosen. Add one before accepting contributions.
+MIT. See [LICENSE](LICENSE).
