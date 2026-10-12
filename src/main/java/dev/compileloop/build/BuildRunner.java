@@ -166,13 +166,38 @@ public final class BuildRunner {
 
     private static BuildResult early(String label, Instant start, BuildOutcome outcome, String message) {
         return new BuildResult(label, outcome, -1, false, start,
-                Duration.between(start, Instant.now()).toMillis(), null, message);
+                Duration.between(start, Instant.now()).toMillis(), null, message,
+                ParsedBuild.empty());
     }
 
     private static BuildResult result(String label, Instant start, BuildOutcome outcome,
                                       int exit, boolean timedOut, Path log, String tail) {
         return new BuildResult(label, outcome, exit, timedOut, start,
-                Duration.between(start, Instant.now()).toMillis(), log, tail);
+                Duration.between(start, Instant.now()).toMillis(), log, tail,
+                parsedFor(outcome, log, tail));
+    }
+
+    /** Largest log we will read back into memory for parsing; beyond this, parse the tail. */
+    private static final long MAX_PARSE_BYTES = 16L * 1024 * 1024;
+
+    /**
+     * Parse only builds that ran to completion (PASS/FAIL). Prefer the full log
+     * so compile errors near the top survive a chatty test run; fall back to the
+     * bounded tail if the log is missing, unreadable or huge.
+     */
+    private static ParsedBuild parsedFor(BuildOutcome outcome, Path log, String tail) {
+        if (outcome != BuildOutcome.PASS && outcome != BuildOutcome.FAIL) {
+            return ParsedBuild.empty();
+        }
+        String text = tail;
+        try {
+            if (log != null && Files.isRegularFile(log) && Files.size(log) <= MAX_PARSE_BYTES) {
+                text = new String(Files.readAllBytes(log), StandardCharsets.UTF_8);
+            }
+        } catch (IOException ignored) {
+            // keep the tail
+        }
+        return BuildOutputParser.parse(text);
     }
 
     static Optional<Path> resolveMavenExecutable(Path projectDirectory) {

@@ -32,6 +32,10 @@ public record ParsedBuild(
     public record TestSummary(int run, int failures, int errors, int skipped) {
     }
 
+    public static ParsedBuild empty() {
+        return new ParsedBuild(List.of(), List.of(), Optional.empty());
+    }
+
     public boolean hasCompileErrors() {
         return !compileErrors.isEmpty();
     }

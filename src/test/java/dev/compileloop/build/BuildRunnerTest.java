@@ -91,6 +91,9 @@ class BuildRunnerTest {
         assertNotNull(r.logPath());
         assertTrue(Files.isRegularFile(r.logPath()));
         assertTrue(r.outputTail().contains("BUILD SUCCESS"));
+        assertEquals(1, r.parsed().testSummary().orElseThrow().run());
+        assertFalse(r.parsed().hasCompileErrors());
+        assertFalse(r.parsed().hasTestFailures());
     }
 
     @Test
@@ -104,6 +107,9 @@ class BuildRunnerTest {
         assertTrue(r.exitCode() != 0);
         assertFalse(r.infrastructureFailure());
         assertTrue(r.outputTail().contains("boom"));
+        assertEquals(1, r.parsed().testFailures().size());
+        assertTrue(r.parsed().testFailures().get(0).message().contains("boom"));
+        assertEquals("fx.FxTest", r.parsed().testFailures().get(0).testClass());
     }
 
     @Test
@@ -116,6 +122,9 @@ class BuildRunnerTest {
         assertEquals(BuildOutcome.FAIL, r.outcome(), r.outputTail());
         assertFalse(r.infrastructureFailure());
         assertTrue(r.outputTail().contains("COMPILATION ERROR"));
+        assertTrue(r.parsed().hasCompileErrors(), "structured errors should be attached");
+        assertTrue(r.parsed().compileErrors().get(0).file().endsWith("FxTest.java"));
+        assertTrue(r.parsed().compileErrors().get(0).message().contains("incompatible types"));
     }
 
     @Test
@@ -126,6 +135,7 @@ class BuildRunnerTest {
         assertTrue(r.infrastructureFailure());
         assertFalse(r.passed());
         assertTrue(r.outputTail().contains("Not a directory"));
+        assertFalse(r.parsed().hasCompileErrors());
     }
 
     @Test

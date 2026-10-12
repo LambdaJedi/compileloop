@@ -11,7 +11,8 @@ public record BuildResult(
         Instant startedAt,
         long durationMillis,
         Path logPath,
-        String outputTail
+        String outputTail,
+        ParsedBuild parsed
 ) {
     public boolean passed() {
         return outcome == BuildOutcome.PASS;
