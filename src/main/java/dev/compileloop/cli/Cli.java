@@ -2,23 +2,22 @@ package dev.compileloop.cli;
 
 import dev.compileloop.build.BuildOutcome;
 import dev.compileloop.build.BuildResult;
-import dev.compileloop.build.ParsedBuild;
-import dev.compileloop.build.ParsedBuild.CompileError;
-import dev.compileloop.build.ParsedBuild.TestFailure;
 import dev.compileloop.build.ReportWriter;
+import dev.compileloop.build.TextReport;
 
 import java.io.IOException;
 import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.Locale;
 
 /**
  * Command-line front end. All behaviour lives here (with injected streams and
  * build action) so it can be tested without launching Maven or touching System.out.
  *
  * Exit codes: 0 build passed; 1 build failed (the project's code or tests);
- * 2 timed out; 3 could not run the build (infrastructure); 64 bad usage.
+ * 2 timed out; 3 could not run the build or read the run directory; 64 bad usage.
  */
 public final class Cli {
 
@@ -29,7 +28,6 @@ public final class Cli {
     public static final int EXIT_USAGE = 64;
 
     static final int DEFAULT_TIMEOUT_SECONDS = 300;
-    private static final int UNPARSED_TAIL_LINES = 20;
 
     /** What the CLI runs; the real one is BuildRunner::runMavenTests. */
     @FunctionalInterface
@@ -59,13 +57,21 @@ public final class Cli {
             printUsage(out);
             return EXIT_PASS;
         }
-        if (!command.equals("test")) {
-            err.println("Unknown command: " + command);
-            err.println();
-            printUsage(err);
-            return EXIT_USAGE;
-        }
+        return switch (command) {
+            case "test" -> runTest(args);
+            case "report" -> runReport(args);
+            default -> {
+                err.println("Unknown command: " + command);
+                err.println();
+                printUsage(err);
+                yield EXIT_USAGE;
+            }
+        };
+    }
 
+    // ---- test -------------------------------------------------------------
+
+    private int runTest(String[] args) {
         Path project = null;
         boolean json = false;
         int timeoutSeconds = DEFAULT_TIMEOUT_SECONDS;
@@ -110,13 +116,20 @@ public final class Cli {
             err.println("Could not run the build: " + e.getMessage());
             return EXIT_INFRA;
         }
-        return json ? reportJson(result) : report(result, timeoutSeconds);
+        return json ? reportJson(result) : reportText(result, timeoutSeconds);
     }
-
-    // ---- reporting --------------------------------------------------------
 
     private int reportJson(BuildResult r) {
         out.println(ReportWriter.toJson(r));
+        return exitCodeFor(r);
+    }
+
+    private int reportText(BuildResult r, Integer timeoutSeconds) {
+        out.print(TextReport.render(r, timeoutSeconds));
+        return exitCodeFor(r);
+    }
+
+    private static int exitCodeFor(BuildResult r) {
         return switch (r.outcome()) {
             case PASS -> EXIT_PASS;
             case FAIL -> EXIT_FAIL;
@@ -125,114 +138,40 @@ public final class Cli {
         };
     }
 
-    private int report(BuildResult r, int timeoutSeconds) {
-        out.println("CompileLoop: " + r.commandLabel());
-        switch (r.outcome()) {
-            case PASS -> {
-                out.println("Result: PASS (" + seconds(r.durationMillis()) + ")");
-                printSummary(r.parsed());
-                printLog(r);
+    // ---- report -----------------------------------------------------------
+
+    private int runReport(String[] args) {
+        if (args.length < 2) {
+            return usageError("Missing run directory.");
+        }
+        if (args.length > 2) {
+            return usageError("Unexpected extra argument: " + args[2]);
+        }
+        Path dir = Path.of(args[1]);
+        if (!Files.isDirectory(dir)) {
+            return usageError("Not a directory: " + dir);
+        }
+        Path text = dir.resolve(ReportWriter.TEXT_FILE_NAME);
+        Path json = dir.resolve(ReportWriter.FILE_NAME);
+        try {
+            if (Files.isRegularFile(text)) {
+                out.print(Files.readString(text, StandardCharsets.UTF_8));
                 return EXIT_PASS;
             }
-            case FAIL -> {
-                out.println("Result: FAIL, exit code " + r.exitCode()
-                        + " (" + seconds(r.durationMillis()) + ")");
-                printFailures(r);
-                printLog(r);
-                return EXIT_FAIL;
+            if (Files.isRegularFile(json)) {
+                out.print(Files.readString(json, StandardCharsets.UTF_8));
+                return EXIT_PASS;
             }
-            case TIMEOUT -> {
-                out.println("Result: TIMEOUT. The build was stopped after " + timeoutSeconds + "s.");
-                printLog(r);
-                return EXIT_TIMEOUT;
-            }
-            default -> {
-                // START_ERROR, INFRA_ERROR, CANCELLED: not the project's fault.
-                out.println("Result: " + r.outcome() + ". The build could not be run or completed; "
-                        + "this says nothing about the project's code.");
-                String detail = r.outputTail() == null ? "" : r.outputTail().strip();
-                if (!detail.isEmpty()) {
-                    out.println(detail);
-                }
-                printLog(r);
-                return EXIT_INFRA;
-            }
+        } catch (IOException e) {
+            err.println("Could not read report: " + e.getMessage());
+            return EXIT_INFRA;
         }
+        err.println("No report found in " + dir
+                + " (looked for " + ReportWriter.TEXT_FILE_NAME + " and " + ReportWriter.FILE_NAME + ").");
+        return EXIT_INFRA;
     }
 
-    private void printFailures(BuildResult r) {
-        ParsedBuild p = r.parsed();
-        if (p.hasCompileErrors()) {
-            out.println();
-            out.println("Compile errors (" + p.compileErrors().size() + "):");
-            for (CompileError e : p.compileErrors()) {
-                out.println("  " + e.file() + ":" + e.line() + ":" + e.column());
-                printIndented(e.message());
-            }
-        }
-        if (p.hasTestFailures()) {
-            out.println();
-            out.println("Test failures (" + p.testFailures().size() + "):");
-            for (TestFailure f : p.testFailures()) {
-                out.println("  " + testId(f) + " [" + f.kind() + "]");
-                printIndented(f.message());
-            }
-        }
-        printSummary(p);
-        if (!p.hasCompileErrors() && !p.hasTestFailures()) {
-            out.println();
-            out.println("The build failed but no structured errors were recognised. "
-                    + "Last lines of output:");
-            String[] lines = (r.outputTail() == null ? "" : r.outputTail()).strip().split("\\R");
-            int from = Math.max(0, lines.length - UNPARSED_TAIL_LINES);
-            for (int i = from; i < lines.length; i++) {
-                out.println("  " + lines[i]);
-            }
-        }
-    }
-
-    private void printSummary(ParsedBuild p) {
-        p.testSummary().ifPresent(s -> {
-            out.println();
-            out.println("Tests: " + s.run() + " run, " + s.failures() + " failed, "
-                    + s.errors() + " errors, " + s.skipped() + " skipped");
-        });
-    }
-
-    private void printLog(BuildResult r) {
-        if (r.runDirectory() != null) {
-            out.println();
-            out.println("Run:    " + r.runId());
-            if (r.logPath() != null) {
-                out.println("Log:    " + r.logPath());
-            }
-            out.println("Report: " + r.runDirectory().resolve(ReportWriter.FILE_NAME));
-        } else if (r.logPath() != null) {
-            out.println();
-            out.println("Log:    " + r.logPath());
-        }
-    }
-
-    private void printIndented(String message) {
-        for (String line : message.split("\\R")) {
-            out.println("    " + line);
-        }
-    }
-
-    private static String testId(TestFailure f) {
-        StringBuilder sb = new StringBuilder(f.testClass());
-        if (!f.testMethod().isEmpty()) {
-            sb.append('.').append(f.testMethod());
-        }
-        if (f.line() >= 0) {
-            sb.append(':').append(f.line());
-        }
-        return sb.toString();
-    }
-
-    private static String seconds(long millis) {
-        return String.format(Locale.ROOT, "%.1fs", millis / 1000.0);
-    }
+    // ---- usage ------------------------------------------------------------
 
     private int usageError(String message) {
         err.println(message);
@@ -246,17 +185,18 @@ public final class Cli {
         to.println();
         to.println("Usage:");
         to.println("  compileloop test <project-dir> [--timeout <seconds>] [--json]");
+        to.println("  compileloop report <run-dir>");
         to.println("  compileloop --help");
         to.println();
-        to.println("Options:");
+        to.println("Options for 'test':");
         to.println("  --timeout <seconds>   stop the build after this long (default " + DEFAULT_TIMEOUT_SECONDS + ")");
         to.println("  --json                print the JSON report to stdout instead of the text summary");
         to.println();
         to.println("Exit codes:");
-        to.println("  0  build passed");
+        to.println("  0  build passed (or report rendered)");
         to.println("  1  build failed (compile errors or failing tests)");
         to.println("  2  build timed out");
-        to.println("  3  the build could not be run (e.g. Maven not found)");
+        to.println("  3  the build could not be run, or the run directory could not be read");
         to.println("  64 bad command-line usage");
     }
 }
