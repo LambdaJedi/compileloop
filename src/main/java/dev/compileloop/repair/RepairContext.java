@@ -39,12 +39,37 @@ public record RepairContext(
     public String render() {
         StringBuilder sb = new StringBuilder();
         sb.append("You are proposing a minimal repair for a failing ")
-                .append(buildSystem).append(' ').append(language).append(" project.\n");
-        sb.append("Reply with exactly one JSON object and nothing else (no markdown fences, no commentary):\n");
-        sb.append("{\"summary\": \"<one sentence>\", \"diff\": \"<unified diff>\", \"assumptions\": [\"<string>\"]}\n");
-        sb.append("The diff must be a unified diff with git-style paths (a/<path> and b/<path>).\n\n");
+                .append(buildSystem).append(' ').append(language).append(" project.\n\n");
+
+        sb.append("## Response format (exact)\n");
+        sb.append("Reply with exactly one JSON object and nothing else. ")
+                .append("No markdown fences, no commentary before or after.\n\n");
+        sb.append("{\"summary\": \"<one sentence>\", \"diff\": \"<unified diff>\", ")
+                .append("\"assumptions\": [\"<string>\"]}\n\n");
+        sb.append("The value of \"diff\" MUST be a complete unified diff. ")
+                .append("It MUST begin with the two header lines `--- a/<path>` and `+++ b/<path>` ")
+                .append("before any `@@` hunk. It MUST NOT begin with `@@`.\n\n");
+        sb.append("Example of a well-formed response (do not copy the code, only the shape):\n");
+        sb.append("{\"summary\": \"Return a + b instead of a string.\", ")
+                .append("\"diff\": \"--- a/src/main/java/com/example/Widget.java\\n")
+                .append("+++ b/src/main/java/com/example/Widget.java\\n")
+                .append("@@ -10,3 +10,3 @@\\n")
+                .append("     public int add(int a, int b) {\\n")
+                .append("-        return \\\"x\\\";\\n")
+                .append("+        return a + b;\\n")
+                .append("     }\\n\", ")
+                .append("\"assumptions\": []}\n\n");
 
         sb.append("## Rules\n");
+        sb.append("- The diff MUST start with `--- a/...` and `+++ b/...`. ")
+                .append("A diff that starts with `@@` is invalid and will be rejected.\n");
+        sb.append("- In the `@@ -oldStart,oldCount +newStart,newCount @@` header, ")
+                .append("oldCount is the number of context and `-` lines in the hunk, ")
+                .append("and newCount is the number of context and `+` lines. ")
+                .append("A wrong count causes the patch to be rejected.\n");
+        sb.append("- Prefer the smallest correct change: fix method bodies before changing method signatures. ")
+                .append("Do not change a public method's return type or parameter list unless the diagnostic ")
+                .append("itself requires it.\n");
         sb.append("- Only modify files under: ").append(String.join(", ", policy.allowedRoots())).append('\n');
         sb.append("- Only modify files of type: ").append(String.join(", ", policy.allowedExtensions())).append('\n');
         sb.append("- At most ").append(policy.maxFiles()).append(" files and ")

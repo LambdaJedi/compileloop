@@ -334,8 +334,11 @@ class PatchValidatorTest {
     @Test
     void rejectsMalformedDiffs() {
         assertRejectedWith(Code.MALFORMED_DIFF, "this is not a diff\n");
+        // A hunk header that doesn't match the "--- +N[,M] +N[,M]" pattern is still
+        // rejected. (An accepted hunk with a wrong count is handled by recount.)
         assertRejectedWith(Code.MALFORMED_DIFF,
-                diff("--- a/src/main/java/fx/Calc.java", "+++ b/src/main/java/fx/Calc.java", "@@ -1,2 +1,2 @@", "-old"));
+                diff("--- a/src/main/java/fx/Calc.java", "+++ b/src/main/java/fx/Calc.java",
+                        "@@ not a header @@", "-old"));
     }
 
     @Test

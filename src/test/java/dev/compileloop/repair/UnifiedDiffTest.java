@@ -273,6 +273,39 @@ class UnifiedDiffTest {
         assertEquals(1, f.added());
     }
 
+    // ---- recount: header counts are advisory, body counts are truth ------
+
+    @Test
+    void recountsHunkHeaderCountsFromTheBody() throws Exception {
+        // Real output from qwen2.5-coder:7b: header says 7,7 but the body
+        // is 3,3. Recount (matching `git apply --recount`) accepts it.
+        FilePatch f = parse(diff(
+                "--- a/src/main/java/fx/Calc.java",
+                "+++ b/src/main/java/fx/Calc.java",
+                "@@ -5,7 +5,7 @@",
+                "     public int add(int a, int b) {",
+                "-        return \"x\";",
+                "+        return a + b;",
+                "     }")).get(0);
+
+        assertEquals(3, f.hunks().get(0).oldCount());
+        assertEquals(3, f.hunks().get(0).newCount());
+        assertEquals(1, f.added());
+        assertEquals(1, f.removed());
+    }
+
+    @Test
+    void recountDoesNotAcceptHunksWithNoBody() {
+        assertRejected(diff("--- a/A.java", "+++ b/A.java", "@@ -1,3 +1,3 @@"));
+    }
+
+    @Test
+    void recountDoesNotAcceptUnknownBodyPrefixes() {
+        assertRejected(diff("--- a/A.java", "+++ b/A.java", "@@ -1 +1 @@", "?a", "+b"));
+    }
+
+    // ---- rejections ------------------------------------------------------
+
     @Test
     void rejectsMalformedDiffs() {
         assertRejected("");
@@ -281,22 +314,20 @@ class UnifiedDiffTest {
         assertRejected(diff("--- a/A.java", "@@ -1 +1 @@", "-a", "+b"));            // no +++
         assertRejected(diff("@@ -1 +1 @@", "-a", "+b"));                            // hunk without file header
         assertRejected(diff("--- a/A.java", "+++ b/A.java", "@@ nonsense @@"));     // bad hunk header
-        assertRejected(diff("--- a/A.java", "+++ b/A.java", "@@ -1,2 +1,2 @@", "-a", "+b")); // truncated
-        assertRejected(diff("--- a/A.java", "+++ b/A.java", "@@ -1 +1 @@", "-a", "-b", "+c"));  // too many
-        assertRejected(diff("--- a/A.java", "+++ b/A.java", "@@ -1 +1 @@", "-a", "+b", " extra")); // padded
-        assertRejected(diff("--- a/A.java", "+++ b/A.java", "@@ -1 +1 @@", "-a", "+b", "garbage"));
-        assertRejected(diff("--- a/A.java", "+++ b/A.java", "@@ -1 +1 @@", "?a", "+b"));
+        assertRejected(diff("--- a/A.java", "+++ b/A.java", "@@ -1,2 +1,2 @@"));    // hunk header, no body
+        assertRejected(diff("--- a/A.java", "+++ b/A.java", "@@ -1 +1 @@", "?a", "+b")); // unknown body prefix
+        assertRejected(diff("--- a/A.java", "+++ b/A.java", "@@ -1 +1 @@", "-a", "+b", "garbage")); // trailing junk
         assertRejected(diff("--- \"a/quoted\\tname.java\"", "+++ \"b/quoted\\tname.java\"", "@@ -1 +1 @@", "-a", "+b"));
         assertRejected(diff("diff --git \"a/x y\" \"b/x y\"", "--- a/x", "+++ b/x", "@@ -1 +1 @@", "-a", "+b"));
         assertRejected(diff("diff --git a/A.java b/A.java"));                        // header only, no changes
-        assertRejected(diff("--- a/A.java", "+++ b/A.java", "@@ -99999999999 +1 @@", "-a", "+b")); // number overflow
+        assertRejected(diff("--- a/A.java", "+++ b/A.java", "@@ -99999999999 +1 @@", "-a", "+b")); // overflow
         assertRejected(diff("diff --git a/A.java b/A.java", "mystery header line"));
     }
 
     @Test
     void errorsPointAtALine() {
         try {
-            UnifiedDiff.parse(diff("--- a/A.java", "+++ b/A.java", "@@ -1 +1 @@", "-a", "-b", "+c"));
+            UnifiedDiff.parse(diff("--- a/A.java", "+++ b/A.java", "@@ -1 +1 @@", "-a", "?weird"));
             fail("expected an error");
         } catch (UnifiedDiff.DiffFormatException e) {
             assertTrue(e.getMessage().startsWith("line 5"), e.getMessage());

@@ -9,8 +9,12 @@ import java.util.regex.Pattern;
  * Strict parser for unified diffs (git style, also plain ---/+++). It only
  * describes a diff: it never touches the filesystem. Paths have one leading
  * "a/" (old) or "b/" (new) stripped, as {@code git apply} / {@code patch -p1} do.
- * Hunk line counts must match their headers exactly, so a truncated or padded
- * diff is rejected instead of half-understood.
+ *
+ * <p>Hunk counts are re-derived from the body's ' ', '-', '+' markers, matching
+ * {@code git apply --recount}. A header whose numeric counts disagree with its
+ * body is accepted when the body is unambiguous; the stored hunk carries the
+ * recomputed counts. Malformed headers, missing file headers, unexpected body
+ * lines and empty hunks are still rejected.
  */
 public final class UnifiedDiff {
 
@@ -153,73 +157,97 @@ public final class UnifiedDiff {
             throw new DiffFormatException(headerLine, "hunk without a '---'/'+++' file header");
         }
         int oldStart;
-        int oldCount;
         int newStart;
-        int newCount;
         try {
             oldStart = Integer.parseInt(m.group(1));
-            oldCount = m.group(2) == null ? 1 : Integer.parseInt(m.group(2));
             newStart = Integer.parseInt(m.group(3));
-            newCount = m.group(4) == null ? 1 : Integer.parseInt(m.group(4));
+            // Declared counts are parsed only to reject non-numeric values.
+            // The actual counts are re-derived from the body, matching
+            // `git apply --recount`: a wrong count is a cosmetic error when
+            // the body is unambiguous, so we do not reject on arithmetic.
+            if (m.group(2) != null) {
+                Integer.parseInt(m.group(2));
+            }
+            if (m.group(4) != null) {
+                Integer.parseInt(m.group(4));
+            }
         } catch (NumberFormatException e) {
             throw new DiffFormatException(headerLine, "hunk numbers are out of range");
         }
-        int oldLeft = oldCount;
-        int newLeft = newCount;
+
         List<String> body = new ArrayList<>();
+        int oldCount = 0;
+        int newCount = 0;
         int added = 0;
         int removed = 0;
         i++;
-        while (oldLeft > 0 || newLeft > 0) {
-            if (i >= lines.size()) {
-                throw new DiffFormatException(headerLine, "hunk is truncated (expected "
-                        + Math.max(oldLeft, newLeft) + " more lines)");
-            }
+        while (i < lines.size()) {
             String l = lines.get(i);
-            char c = l.isEmpty() ? ' ' : l.charAt(0);
-            switch (c) {
-                case ' ' -> {
-                    if (oldLeft == 0 || newLeft == 0) {
-                        throw countMismatch(i + 1);
-                    }
-                    oldLeft--;
-                    newLeft--;
-                    body.add(l.isEmpty() ? " " : l);
-                }
-                case '-' -> {
-                    if (oldLeft == 0) {
-                        throw countMismatch(i + 1);
-                    }
-                    oldLeft--;
-                    removed++;
-                    body.add(l);
-                }
-                case '+' -> {
-                    if (newLeft == 0) {
-                        throw countMismatch(i + 1);
-                    }
-                    newLeft--;
-                    added++;
-                    body.add(l);
-                }
-                case '\\' -> body.add(l); // "\ No newline at end of file": not counted
-                default -> throw new DiffFormatException(i + 1,
-                        "unexpected line inside a hunk: " + clip(l));
+
+            // A "--- " line followed by "+++ " is a new file header, not body
+            // content. Real diffs never have that pattern as a hunk body, and
+            // without this check the next section's headers would be swallowed
+            // as body lines (e.g. "-old\n+new\n--- a/B.java\n+++ b/B.java\n").
+            if (l.startsWith("--- ") && i + 1 < lines.size()
+                    && lines.get(i + 1).startsWith("+++ ")) {
+                break;
             }
+
+            if (l.isEmpty()) {
+                // Empty line between two body lines is an empty context line
+                // (the leading space was stripped upstream). A trailing empty
+                // line — or one followed by a new file header — ends the hunk
+                // instead of inflating the count. Stored as a single space,
+                // matching what git diff writes.
+                boolean nextIsFileHeader = i + 1 < lines.size()
+                        && lines.get(i + 1).startsWith("--- ")
+                        && i + 2 < lines.size() && lines.get(i + 2).startsWith("+++ ");
+                boolean nextIsBody = !nextIsFileHeader
+                        && i + 1 < lines.size() && isBodyLine(lines.get(i + 1));
+                if (body.isEmpty() || !nextIsBody) {
+                    break;
+                }
+                oldCount++;
+                newCount++;
+                body.add(" ");
+                i++;
+                continue;
+            }
+
+            char c = l.charAt(0);
+            if (c == ' ') {
+                oldCount++;
+                newCount++;
+            } else if (c == '-') {
+                oldCount++;
+                removed++;
+            } else if (c == '+') {
+                newCount++;
+                added++;
+            } else if (c == '\\') {
+                // "\ No newline at end of file": informational, not counted
+            } else {
+                break;
+            }
+            body.add(l);
             i++;
         }
-        while (i < lines.size() && lines.get(i).startsWith("\\")) {
-            body.add(lines.get(i));
-            i++;
+        if (oldCount == 0 && newCount == 0) {
+            throw new DiffFormatException(headerLine, "hunk header without any body lines");
         }
+
         b.hunks.add(new Hunk(oldStart, oldCount, newStart, newCount, body));
         b.added += added;
         b.removed += removed;
         return i;
     }
 
-    private static DiffFormatException countMismatch(int line) {
-        return new DiffFormatException(line, "hunk has more lines than its header declares");
+    private static boolean isBodyLine(String l) {
+        if (l.isEmpty()) {
+            return false;
+        }
+        char c = l.charAt(0);
+        return c == ' ' || c == '-' || c == '+' || c == '\\';
     }
 
     // ---- headers ------------------------------------------------------------
