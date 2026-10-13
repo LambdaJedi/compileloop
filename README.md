@@ -10,7 +10,7 @@ CompileLoop runs a project's build and tests, turns failures into structured dia
 
 ## Status
 
-Early development. The deterministic build-and-diagnose layer and a basic CLI work; the AI proposal layer (Phase 3) exists as a library, but is not yet wired into the CLI or a repair loop.
+Early development. The deterministic build-and-diagnose layer and a basic CLI work; the repair loop works end to end: a local model proposes a patch, CompileLoop validates it, applies it in a disposable copy, re-runs the build there, and reports exactly what happened. Your working tree is never changed.
 
 | Piece | State |
 |---|---|
@@ -22,8 +22,9 @@ Early development. The deterministic build-and-diagnose layer and a basic CLI wo
 | Command-line interface (`compileloop test <dir>`) | Done, tested |
 | AI patch proposal: provider interface, strict response format, mock and local Ollama providers, bounded context | Done, tested (Ollama against a fake server) |
 | Patch validator: path containment, allowlists, size limits, no binary/rename/delete/symlink tricks | Done, tested with attack-style cases |
-| Safe patch application in a disposable copy + re-verification | Not started |
-| Audit report per attempt | Not started |
+| Safe patch application in a disposable copy + re-verification | Done, tested (fake builds; real Maven on a tiny project) |
+| Audit report per attempt (raw answer, diff, validation, build log, `repair.json`) | Done, tested |
+| `compileloop repair` command | Done |
 
 ## What it is not
 
@@ -118,7 +119,27 @@ target/compileloop/runs/<runId>/
 
 ## Safety model for AI output
 
-Model output is untrusted data. It must be one JSON object (`summary`, `diff`, optional `assumptions`); the diff is parsed strictly and then validated against a policy before anything could be applied. By default only `.java` files under `src/main/java` and `src/test/java` may change; build files, CI, `.git`, scripts, binaries, renames, copies, deletions, mode changes, symlinks, absolute paths and `..` are all rejected, and every violation is listed. Applying a validated patch (in a disposable copy) is Phase 4.
+Model output is untrusted data. It must be one JSON object (`summary`, `diff`, optional `assumptions`); the diff is parsed strictly and then validated against a policy before anything could be applied. By default only `.java` files under `src/main/java` and `src/test/java` may change; build files, CI, `.git`, scripts, binaries, renames, copies, deletions, mode changes, symlinks, absolute paths and `..` are all rejected, and every violation is listed. Applying is strict too: every context and removed line must match the file exactly (only line numbers may drift, within 50 lines, and an ambiguous match is refused), the whole patch applies or nothing is written, and line endings are preserved.
+
+## Repairing a project
+
+```
+compileloop repair <project-dir> --model <name> [--ollama-url http://localhost:11434] [--attempts 3]
+```
+
+1. The project is built. If it passes there is nothing to do. If the build could not run, or failed with nothing recognised (for example a dependency could not be downloaded), the model is never asked.
+2. The model gets a bounded context (the diagnostics and the relevant source files) and proposes one patch.
+3. The patch is validated, then applied to a fresh temporary copy of the project, and the build is re-run in that copy.
+4. A passing build in the copy is a verified fix. It is written to `target/compileloop/repairs/<run>/fix.patch` and **never** applied to your working tree. Review it, then run `git apply` yourself.
+5. Failed attempts are retried (up to `--attempts`), and the next prompt says briefly why the earlier ones failed.
+
+By default test files are protected: a "fix" that edits the tests proves nothing. `--allow-test-changes` lifts that, and the report then warns that the patch changes tests.
+
+`--response-file <file>` replays a canned model answer instead of calling a model, so you can try the whole loop offline.
+
+**Important:** the temporary copy is not a sandbox. Verifying a patch means running your build and tests on patched code, and that code runs with your permissions. Use it on projects and models you trust, or inside a container or VM.
+
+Each run keeps an audit trail under `target/compileloop/repairs/<run>/`: `repair.json` (verdict, config, every attempt), and per attempt `response.txt` (the model's exact answer), `proposal.diff`, `attempt.json` and `build.log`.
 
 ## Design notes
 
@@ -153,6 +174,11 @@ src/main/java/dev/compileloop/build/
   DiagnosticCategory.java coarse, stable classification of each diagnostic
   ReportWriter.java       builds report.json (no JSON library needed)
 src/main/java/dev/compileloop/repair/
+  RepairEngine.java       the loop: ask, validate, apply in a copy, build the copy, record
+  Workspace.java          disposable project copy (no VCS data, no links, deleted on close)
+  PatchApplier.java       strict, all-or-nothing application of a validated diff
+  RepairResult.java       verdict, attempts and statuses
+  RepairReport.java       JSON for repair.json / attempt.json
   AIProvider.java         the only thing a model backend implements: context in, proposal out
   RepairContext.java      what a model may see (diagnostics, bounded source files, rules)
   ContextBuilder.java     deterministic, bounded context; reads only allowed source roots

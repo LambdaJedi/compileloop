@@ -26,6 +26,13 @@ public record RepairContext(
         notes = List.copyOf(notes);
     }
 
+    /** A copy with extra notes appended (used to tell the model why earlier attempts failed). */
+    public RepairContext withExtraNotes(List<String> extra) {
+        List<String> all = new java.util.ArrayList<>(notes);
+        all.addAll(extra);
+        return new RepairContext(language, buildSystem, diagnostics, files, policy, all, acceptance);
+    }
+
     private static final int MAX_MESSAGE_CHARS = 2000;
 
     /** The prompt text. Deterministic: the same context always renders the same text. */

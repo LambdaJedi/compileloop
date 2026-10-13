@@ -217,7 +217,7 @@ public final class BuildRunner {
             DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'").withZone(ZoneOffset.UTC);
 
     /** UTC timestamp plus a random suffix, e.g. 20261012T115500Z-3f9a1c. */
-    static String newRunId(Instant at) {
+    public static String newRunId(Instant at) {
         return RUN_ID_TIME.format(at) + "-"
                 + String.format("%06x", ThreadLocalRandom.current().nextInt(1 << 24));
     }
