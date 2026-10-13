@@ -10,7 +10,7 @@ CompileLoop runs a project's build and tests, turns failures into structured dia
 
 ## Status
 
-Early development. The deterministic build-and-diagnose layer and a basic CLI work; the AI repair loop does not exist yet.
+Early development. The deterministic build-and-diagnose layer and a basic CLI work; the AI proposal layer (Phase 3) exists as a library, but is not yet wired into the CLI or a repair loop.
 
 | Piece | State |
 |---|---|
@@ -20,7 +20,8 @@ Early development. The deterministic build-and-diagnose layer and a basic CLI wo
 | Per-run artifact folder (log + `report.json`), JSON and text reports | Done, tested |
 | Continuous integration (Linux and Windows) | Workflow added |
 | Command-line interface (`compileloop test <dir>`) | Done, tested |
-| AI patch proposal (optional, local model) | Not started |
+| AI patch proposal: provider interface, strict response format, mock and local Ollama providers, bounded context | Done, tested (Ollama against a fake server) |
+| Patch validator: path containment, allowlists, size limits, no binary/rename/delete/symlink tricks | Done, tested with attack-style cases |
 | Safe patch application in a disposable copy + re-verification | Not started |
 | Audit report per attempt | Not started |
 
@@ -115,6 +116,10 @@ target/compileloop/runs/<runId>/
 
 `<runId>` is a UTC timestamp plus a random suffix, for example `20261012T115500Z-3f9a1c`. Runs are never overwritten. A build that never started (bad directory, no `pom.xml`, no Maven) creates no run folder.
 
+## Safety model for AI output
+
+Model output is untrusted data. It must be one JSON object (`summary`, `diff`, optional `assumptions`); the diff is parsed strictly and then validated against a policy before anything could be applied. By default only `.java` files under `src/main/java` and `src/test/java` may change; build files, CI, `.git`, scripts, binaries, renames, copies, deletions, mode changes, symlinks, absolute paths and `..` are all rejected, and every violation is listed. Applying a validated patch (in a disposable copy) is Phase 4.
+
 ## Design notes
 
 - **No shell strings.** Processes are started from an argument list, never through a shell.
@@ -147,6 +152,16 @@ src/main/java/dev/compileloop/build/
   ParsedBuild.java        the structured result of parsing
   DiagnosticCategory.java coarse, stable classification of each diagnostic
   ReportWriter.java       builds report.json (no JSON library needed)
+src/main/java/dev/compileloop/repair/
+  AIProvider.java         the only thing a model backend implements: context in, proposal out
+  RepairContext.java      what a model may see (diagnostics, bounded source files, rules)
+  ContextBuilder.java     deterministic, bounded context; reads only allowed source roots
+  ProposalParser.java     strict JSON schema for model output; anything else is rejected
+  UnifiedDiff.java        strict unified-diff parser (describes a diff, never touches files)
+  PatchPolicy.java        limits: roots, extensions, protected paths, file/line counts
+  PatchValidator.java     accepts a diff only if it has zero violations; never writes
+  MockProvider.java       scripted responses for tests and offline runs
+  OllamaProvider.java     local model over HTTP; no redirects, bounded response
 src/test/resources/maven/ real Maven output captured on Windows, used as parser fixtures
 ```
 

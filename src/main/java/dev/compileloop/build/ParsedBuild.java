@@ -7,20 +7,8 @@ import java.util.Optional;
 public record ParsedBuild(
         List<CompileError> compileErrors,
         List<TestFailure> testFailures,
-        Optional<TestSummary> testSummary,
-        List<String> unrecognized
+        Optional<TestSummary> testSummary
 ) {
-
-    public ParsedBuild {
-        compileErrors = List.copyOf(compileErrors);
-        testFailures = List.copyOf(testFailures);
-        unrecognized = List.copyOf(unrecognized);
-    }
-
-    /** Convenience for callers that do not track unclassified lines. */
-    public ParsedBuild(List<CompileError> ce, List<TestFailure> tf, Optional<TestSummary> ts) {
-        this(ce, tf, ts, List.of());
-    }
 
     /**
      * One javac error. {@code file} uses forward slashes with no leading slash
@@ -38,6 +26,7 @@ public record ParsedBuild(
      * "ERROR" (unexpected exception). {@code testMethod} is empty for
      * class-level failures. {@code line} is the line in the test class where
      * the failure surfaced, or -1 if the stack trace did not show one.
+     * {@code rawExcerpt} is the header, message and the first stack frames as logged.
      */
     public record TestFailure(String testClass, String testMethod, String kind,
                               String message, int line,
@@ -48,7 +37,7 @@ public record ParsedBuild(
     }
 
     public static ParsedBuild empty() {
-        return new ParsedBuild(List.of(), List.of(), Optional.empty(), List.of());
+        return new ParsedBuild(List.of(), List.of(), Optional.empty());
     }
 
     public boolean hasCompileErrors() {
@@ -57,9 +46,5 @@ public record ParsedBuild(
 
     public boolean hasTestFailures() {
         return !testFailures.isEmpty();
-    }
-
-    public boolean hasUnrecognizedErrors() {
-        return !unrecognized.isEmpty();
     }
 }

@@ -15,96 +15,60 @@ import java.util.regex.Pattern;
 /**
  * Turns the text of {@code mvn -B test} (maven-compiler-plugin 3.x, surefire
  * 3.x) into structured compile errors and test failures. Pure function: no I/O.
- * Unrecognised lines are ignored for classification but {@code [ERROR]} lines
- * that match no known pattern are retained in {@link ParsedBuild#unrecognized()}.
+ * Unrecognised lines are ignored, so a Maven format change degrades to "found
+ * nothing" rather than throwing.
  */
 public final class BuildOutputParser {
 
+    // [ERROR] /C:/Users/Mdu/x/Broken.java:[3,13] incompatible types: ...
     private static final Pattern COMPILE_ERROR =
             Pattern.compile("^\\[ERROR] (.+?\\.java):\\[(\\d+),(\\d+)] (.*)$");
     private static final Pattern COMPILE_BLOCK_START =
             Pattern.compile("^\\[ERROR] COMPILATION ERROR\\s*:?\\s*$");
     private static final Pattern COMPILE_BLOCK_END =
             Pattern.compile("^\\[INFO] \\d+ errors?$");
+    // Continuation lines inside the summary: "[ERROR]   symbol:   method foo()"
     private static final Pattern SUMMARY_CONTINUATION =
             Pattern.compile("^\\[ERROR] {3,}(\\S.*)$");
 
+    // [ERROR] fx.CalcTest.adds -- Time elapsed: 0.003 s <<< FAILURE!
     private static final Pattern TEST_HEADER =
             Pattern.compile("^\\[ERROR] (.+?) -- Time elapsed: [\\d.,]+ s <<< (FAILURE|ERROR)!$");
+    //         at fx.CalcTest.adds(CalcTest.java:5)
     private static final Pattern STACK_FRAME =
             Pattern.compile("^\\s+at (\\S+)\\.[^.(\\s]+\\([^:)]+:(\\d+)\\)");
     private static final int RAW_STACK_FRAMES = 8;
     private static final Pattern STACK_START = Pattern.compile("^\\s+at \\S");
 
+    // [ERROR] Tests run: 2, Failures: 1, Errors: 0, Skipped: 0   (no "Time elapsed" => grand total)
     private static final Pattern SUMMARY =
             Pattern.compile("^\\[(?:INFO|ERROR|WARNING)] Tests run: (\\d+), Failures: (\\d+), "
                     + "Errors: (\\d+), Skipped: (\\d+)$");
-
-    /** Cap on retained unclassified lines; the log file remains the full record. */
-    private static final int MAX_UNRECOGNIZED = 50;
 
     private BuildOutputParser() {
     }
 
     public static ParsedBuild parse(String output) {
         if (output == null || output.isEmpty()) {
-            return ParsedBuild.empty();
+            return new ParsedBuild(List.of(), List.of(), Optional.empty());
         }
+        // Any run of CRs before an LF is ONE line break. Plain "\\R" would read the
+        // "\\r\\r\\n" that some Windows tooling emits as an extra blank line, and a
+        // blank line ends a test-failure block.
         String[] lines = output.split("\\r*\\n|\\r", -1);
         return new ParsedBuild(
                 parseCompileErrors(lines),
                 parseTestFailures(lines),
-                parseSummary(lines),
-                collectUnrecognized(lines));
-    }
-
-    // ---- unrecognised -----------------------------------------------------
-
-    private static List<String> collectUnrecognized(String[] lines) {
-        List<String> out = new ArrayList<>();
-        for (String line : lines) {
-            if (!line.startsWith("[ERROR]")) {
-                continue;
-            }
-            if (isRecognised(line) || isMavenBoilerplate(line)) {
-                continue;
-            }
-            out.add(line);
-            if (out.size() >= MAX_UNRECOGNIZED) {
-                break;
-            }
-        }
-        return out;
-    }
-
-    private static boolean isRecognised(String line) {
-        return COMPILE_ERROR.matcher(line).matches()
-                || COMPILE_BLOCK_START.matcher(line).matches()
-                || COMPILE_BLOCK_END.matcher(line).matches()
-                || SUMMARY_CONTINUATION.matcher(line).matches()
-                || TEST_HEADER.matcher(line).matches()
-                || SUMMARY.matcher(line).matches();
-    }
-
-    /** Maven's own failure guidance; not a diagnostic, so not worth reporting. */
-    private static boolean isMavenBoilerplate(String line) {
-        String rest = line.length() > 7 ? line.substring(7).strip() : "";
-        if (rest.isEmpty()) {
-            return true;
-        }
-        return rest.startsWith("Failed to execute goal")
-                || rest.startsWith("-> [Help")
-                || rest.startsWith("[Help")
-                || rest.startsWith("To see the full stack trace")
-                || rest.startsWith("Re-run Maven")
-                || rest.startsWith("For more information")
-                || rest.startsWith("See ");
+                parseSummary(lines));
     }
 
     // ---- compile errors ---------------------------------------------------
 
     private static List<CompileError> parseCompileErrors(String[] lines) {
         List<CompileError> fromBlocks = parseCompileBlocks(lines);
+        // Maven repeats every error in the final "Failed to execute goal" summary.
+        // The block form is complete, so prefer it; use the summary only when the
+        // blocks are missing (e.g. the output was truncated from the front).
         return fromBlocks.isEmpty() ? parseCompileSummary(lines) : fromBlocks;
     }
 
@@ -220,7 +184,7 @@ public final class BuildOutputParser {
             for (; i < lines.length; i++) {
                 String l = lines[i];
                 if (l.isBlank() || l.startsWith("[")) {
-                    break;
+                    break; // end of this failure's block
                 }
                 if (STACK_START.matcher(l).find()) {
                     inStack = true;
@@ -247,6 +211,11 @@ public final class BuildOutputParser {
         return out;
     }
 
+    /**
+     * "fx.CalcTest.adds" -> {"fx.CalcTest", "adds"}. Parameterized names such as
+     * "fx.T.m(int)[1]" drop the suffix. If the last segment starts with an
+     * uppercase letter it is a class (class-level error), so the method is "".
+     */
     private static String[] splitTestId(String id) {
         String bare = id.replaceFirst("[(\\[].*$", "");
         int dot = bare.lastIndexOf('.');
