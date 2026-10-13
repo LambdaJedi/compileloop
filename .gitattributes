@@ -4,3 +4,6 @@
 *.sh   text eol=lf
 *.cmd  text eol=crlf
 *.bat  text eol=crlf
+
+# Test fixtures are captured tool output: keep them byte-identical on every OS.
+src/test/resources/** text eol=lf

@@ -52,7 +52,10 @@ public final class BuildOutputParser {
         if (output == null || output.isEmpty()) {
             return new ParsedBuild(List.of(), List.of(), Optional.empty());
         }
-        String[] lines = output.split("\\R", -1);
+        // Any run of CRs before an LF is ONE line break. Plain "\\R" would read the
+        // "\\r\\r\\n" that some Windows tooling emits as an extra blank line, and a
+        // blank line ends a test-failure block.
+        String[] lines = output.split("\\r*\\n|\\r", -1);
         return new ParsedBuild(
                 parseCompileErrors(lines),
                 parseTestFailures(lines),

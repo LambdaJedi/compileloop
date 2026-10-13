@@ -135,7 +135,9 @@ class BuildOutputParserTest {
 
     @Test
     void handlesWindowsLineEndings() throws IOException {
-        String crlf = resource("failing-test.log").replace("\n", "\r\n");
+        // Normalise first: Git may already have checked the fixture out with CRLF (Windows),
+        // and blindly replacing "\n" would then produce "\r\r\n" and test something else.
+        String crlf = resource("failing-test.log").replace("\r\n", "\n").replace("\n", "\r\n");
 
         ParsedBuild b = BuildOutputParser.parse(crlf);
 
@@ -216,5 +218,33 @@ class BuildOutputParserTest {
         assertEquals(DiagnosticCategory.SYNTAX_ERROR, DiagnosticCategory.forCompileMessage("reached end of file while parsing"));
         assertEquals(DiagnosticCategory.OTHER_COMPILE_ERROR, DiagnosticCategory.forCompileMessage("something javac invented tomorrow"));
         assertEquals(DiagnosticCategory.OTHER_COMPILE_ERROR, DiagnosticCategory.forCompileMessage(null));
+    }
+
+    @Test
+    void doubledCarriageReturnsDoNotCreateBlankLines() throws IOException {
+        // Some Windows tooling emits "\r\r\n"; it must still be a single line break.
+        String doubled = resource("failing-test.log").replace("\r\n", "\n").replace("\n", "\r\r\n");
+
+        ParsedBuild b = BuildOutputParser.parse(doubled);
+
+        assertEquals(1, b.testFailures().size());
+        assertEquals("org.opentest4j.AssertionFailedError: expected: <5> but was: <4>",
+                b.testFailures().get(0).message());
+        assertEquals(5, b.testFailures().get(0).line());
+        assertEquals(Optional.of(new TestSummary(2, 1, 0, 0)), b.testSummary());
+    }
+
+    @Test
+    void realBlankLineStillEndsAFailureBlock() {
+        String out = "[ERROR] fx.T.a -- Time elapsed: 0.1 s <<< FAILURE!\r\n"
+                + "java.lang.AssertionError: first\r\n"
+                + "        at fx.T.a(T.java:3)\r\n"
+                + "\r\n"
+                + "not part of the failure\r\n";
+
+        TestFailure f = BuildOutputParser.parse(out).testFailures().get(0);
+
+        assertEquals("java.lang.AssertionError: first", f.message());
+        assertEquals(3, f.line());
     }
 }

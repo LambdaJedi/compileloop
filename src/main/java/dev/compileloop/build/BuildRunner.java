@@ -8,6 +8,7 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
@@ -274,17 +275,33 @@ public final class BuildRunner {
     }
 
     private static Optional<Path> findOnPath(String executable) {
-        String pathEnv = System.getenv("PATH");
+        return findOnPath(executable, System.getenv("PATH"));
+    }
+
+    /**
+     * PATH entries in the wild can be quoted ("C:\\Program Files\\x") or contain
+     * characters that are illegal in a path; Path.of throws on those, which must
+     * not turn "mvn not found in this entry" into a crash.
+     */
+    static Optional<Path> findOnPath(String executable, String pathEnv) {
         if (pathEnv == null) {
             return Optional.empty();
         }
-        for (String dir : pathEnv.split(File.pathSeparator)) {
+        for (String raw : pathEnv.split(File.pathSeparator)) {
+            String dir = raw.strip();
+            if (dir.length() >= 2 && dir.startsWith("\"") && dir.endsWith("\"")) {
+                dir = dir.substring(1, dir.length() - 1);
+            }
             if (dir.isBlank()) {
                 continue;
             }
-            Path candidate = Path.of(dir, executable);
-            if (Files.isRegularFile(candidate)) {
-                return Optional.of(candidate);
+            try {
+                Path candidate = Path.of(dir, executable);
+                if (Files.isRegularFile(candidate)) {
+                    return Optional.of(candidate);
+                }
+            } catch (InvalidPathException ignored) {
+                // skip this entry
             }
         }
         return Optional.empty();

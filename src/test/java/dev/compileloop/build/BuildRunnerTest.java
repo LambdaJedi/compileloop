@@ -212,4 +212,17 @@ class BuildRunnerTest {
 
         assertEquals(Optional.of(wrapper), resolved);
     }
+
+    @Test
+    void pathSearchSurvivesQuotedAndInvalidEntries() throws IOException {
+        Path bin = Files.createDirectories(tmp.resolve("bin"));
+        Path exe = Files.writeString(bin.resolve("mvn-test-exe"), "");
+        String sep = java.io.File.pathSeparator;
+        // quoted entry, blank entry, an entry with an illegal NUL character, then the real one
+        String path = "\"" + bin + "\"" + sep + sep + "bad\0dir" + sep + "/definitely/not/here";
+
+        assertEquals(Optional.of(exe), BuildRunner.findOnPath("mvn-test-exe", path));
+        assertEquals(Optional.empty(), BuildRunner.findOnPath("mvn-test-exe", "bad\0dir" + sep + "/nope"));
+        assertEquals(Optional.empty(), BuildRunner.findOnPath("mvn-test-exe", null));
+    }
 }
