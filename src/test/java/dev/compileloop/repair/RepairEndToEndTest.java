@@ -51,7 +51,8 @@ class RepairEndToEndTest {
 
     @Test
     @Timeout(120)
-    void repairsABrokenProjectUsingAFakeMavenWrapper() throws IOException {
+    void repairsABrokenProjectUsingAFakeMavenWrapper()
+            throws IOException, UnifiedDiff.DiffFormatException {
         assumeTrue(!windows(), "the fake wrapper is a shell script");
         Path project = Files.createDirectories(tmp.resolve("proj"));
         Files.writeString(project.resolve("pom.xml"), "<project/>\n");
@@ -90,7 +91,14 @@ class RepairEndToEndTest {
         List<String> shown = ai.receivedContexts().get(0).files().stream().map(RepairContext.SourceFile::path).toList();
         assertEquals(List.of("src/main/java/fx/Calc.java"), shown, "the broken file was shown to the model");
         assertTrue(ai.receivedContexts().get(0).render().contains("incompatible types"));
-        assertEquals(GOOD_DIFF, Files.readString(r.patchFile()));
+        // fix.patch is the NORMALIZED rendering (UnifiedDiffWriter adds a
+        // `diff --git` header and recomputes hunk counts). Compare parsed
+        // patches, not raw text, so a cosmetic change to the writer does not
+        // fail this test while a semantic regression still does.
+        String written = Files.readString(r.patchFile());
+        assertEquals(UnifiedDiff.parse(GOOD_DIFF), UnifiedDiff.parse(written),
+                "fix.patch should express the same patches as the model's diff");
+        assertTrue(written.contains("diff --git "), "normalized output keeps a git header");
         assertEquals(CALC, Files.readString(project.resolve("src/main/java/fx/Calc.java")),
                 "the user's own file is unchanged");
     }
