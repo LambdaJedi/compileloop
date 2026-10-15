@@ -2,195 +2,549 @@
 
 [![CI](https://github.com/LambdaJedi/compileloop/actions/workflows/ci.yml/badge.svg)](https://github.com/LambdaJedi/compileloop/actions/workflows/ci.yml)
 
-A self-testing, AI-assisted code repair engine for Maven projects, built as a free, open-source CLI.
+**A local-first AI code repair engine built in Java.**
 
-CompileLoop runs a project's build and tests, turns failures into structured diagnostics, (optionally) asks a local AI model to propose a bounded patch, verifies that patch in an isolated workspace, and reports exactly what happened.
+CompileLoop helps diagnose and repair failing Maven projects using locally hosted AI models. It captures build diagnostics, generates candidate patches, validates proposed changes against strict policies, and verifies them in a disposable copy of the project.
 
-> **Core principle:** the model proposes changes; the trusted engine validates, tests, records and presents them. A passing build is evidence, not proof that software is correct.
+The goal is simple: **let AI propose the fix while deterministic engineering controls decide whether that fix is safe to consider.**
 
-## Status
+CompileLoop is designed around human review, reproducible results, and a complete record of each repair attempt.
 
-Early development. The deterministic build-and-diagnose layer and a basic CLI work; the repair loop works end to end: a local model proposes a patch, CompileLoop validates it, applies it in a disposable copy, re-runs the build there, and reports exactly what happened. Your working tree is never changed.
+## Table of Contents
 
-| Piece | State |
-|---|---|
-| Run `mvn -B test` safely (timeout, process-tree kill, bounded output, log file) | Done, tested |
-| Distinguish outcomes: `PASS`, `FAIL`, `TIMEOUT`, `START_ERROR`, `CANCELLED`, `INFRA_ERROR` | Done |
-| Parse Maven output into compile errors and test failures, with category and raw excerpt | Done, tested against real Windows output |
-| Per-run artifact folder (log + `report.json`), JSON and text reports | Done, tested |
-| Continuous integration (Linux and Windows) | Workflow added |
-| Command-line interface (`compileloop test <dir>`) | Done, tested |
-| AI patch proposal: provider interface, strict response format, mock and local Ollama providers, bounded context | Done, tested (Ollama against a fake server) |
-| Patch validator: path containment, allowlists, size limits, no binary/rename/delete/symlink tricks | Done, tested with attack-style cases |
-| Safe patch application in a disposable copy + re-verification | Done, tested (fake builds; real Maven on a tiny project) |
-| Audit report per attempt (raw answer, diff, validation, build log, `repair.json`) | Done, tested |
-| `compileloop repair` command | Done |
+- [Features](#features)
+- [How It Works](#how-it-works)
+- [Quick Start](#quick-start)
+- [Example Output](#example-output)
+- [Project Examples](#project-examples)
+- [Commands](#commands)
+- [Architecture](#architecture)
+- [Safety and Validation](#safety-and-validation)
+- [Using CompileLoop as a Java Library](#using-compileloop-as-a-java-library)
+- [Benchmark](#benchmark)
+- [Project Structure](#project-structure)
+- [Known Limitations](#known-limitations)
+- [Development](#development)
+- [Roadmap](#roadmap)
+- [License](#license)
 
-## What it is not
+## Features
 
-- Not an unrestricted autonomous coding agent.
-- Not a guarantee that every bug can be fixed.
-- Not a tool that executes arbitrary AI-suggested shell commands.
-- Not a replacement for code review or domain-specific testing.
+- **Local AI inference:** Uses [Ollama](https://ollama.com/) to run code models locally without requiring paid AI APIs.
+- **Automated build diagnostics:** Runs Maven tests and extracts compilation errors, test failures, and other build information.
+- **AI-assisted repair:** Supplies bounded diagnostic context to a local model and requests a unified-diff patch.
+- **Strict patch validation:** Rejects changes that violate file, path, extension, size, or other policy restrictions.
+- **Disposable workspaces:** Tests proposed patches in a temporary project copy rather than modifying the original working tree.
+- **Verified candidate patches:** Produces a Git-compatible patch when the modified project passes the verification build.
+- **Auditability:** Preserves model responses, validation results, build logs, reports, and repair attempts.
+- **Offline testing support:** Includes a mock AI provider and replayable model responses for testing without a running model.
+- **Cross-platform support:** Tested on Windows and Linux, with CI configured for both.
+- **Java-first architecture:** Built around small components with clear responsibilities and an extensible AI provider interface.
 
-## Requirements
+## How It Works
 
-- JDK 17 or newer
-- Maven 3.9+ on your `PATH` (or a Maven Wrapper in the project being built)
-- Windows, macOS or Linux
+CompileLoop follows a controlled repair pipeline:
 
-The first release must work with no AI model and no paid API.
-
-## Build and test
-
-```bash
-mvn -B test
+```mermaid
+flowchart TD
+    A[Target Maven Project] --> B[Run Maven Tests]
+    B --> C[Parse Build Diagnostics]
+    C --> D[Build Bounded AI Context]
+    D --> E[Request Candidate Patch]
+    E --> F[Parse Model Response]
+    F --> G[Validate Patch Policy]
+    G --> H[Apply Patch in Temporary Copy]
+    H --> I[Run Verification Build]
+    I --> J{Build Passes?}
+    J -- Yes --> K[Save Verified Candidate Patch]
+    J -- No --> L[Record Failure and Consider Retry]
+    L --> E
+    K --> M[Human Reviews and Applies Patch]
 ```
 
-The suite takes about 30 seconds. The `BuildRunnerTest` cases are integration tests that generate small throwaway Maven projects and run the real Maven against them.
+The process works as follows:
 
-## Using the CLI
+1. **Run the baseline build.** CompileLoop executes Maven tests and captures the output.
+2. **Parse diagnostics.** Recognised errors are converted into structured records containing information such as file paths, line numbers, messages, and diagnostic categories.
+3. **Build context.** The engine selects relevant source files and diagnostic information for the model.
+4. **Generate a proposal.** The configured AI provider returns a structured response containing a summary and unified diff.
+5. **Validate the proposal.** The patch must satisfy the configured policy before it can be applied.
+6. **Create a disposable workspace.** The validated patch is applied to a copy of the project.
+7. **Verify the candidate.** Maven tests run again inside the temporary copy.
+8. **Record the result.** CompileLoop saves the patch and supporting artifacts when verification succeeds.
+9. **Require human approval.** You inspect the patch and decide whether to apply it to your actual project.
 
-Build the runnable jar once (skipping tests makes it quick):
+A successful verification means the candidate passed the configured build checks. It does not prove that the code is correct, secure, or free from regressions.
+
+## Quick Start
+
+### Prerequisites
+
+- JDK 17 or later
+- Maven 3.9 or later
+- [Ollama](https://ollama.com/) installed and running
+- A compatible local code model
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/LambdaJedi/compileloop.git
+cd compileloop
+```
+
+### 2. Build the project
 
 ```bash
 mvn -B -DskipTests package
 ```
 
-Then point it at any Maven project:
+### 3. Download a local code model
 
 ```bash
-java -jar target/compileloop-0.1.0-SNAPSHOT.jar test path/to/maven/project
-java -jar target/compileloop-0.1.0-SNAPSHOT.jar test path/to/project --timeout 120
-java -jar target/compileloop-0.1.0-SNAPSHOT.jar test path/to/project --json
+ollama pull qwen2.5-coder:7b
 ```
 
-`--json` prints the same report that is saved as `report.json` and keeps the same exit codes.
+Ensure the Ollama service is running before starting a repair.
 
-Example output for a project with a compile error:
+### 4. Repair the bundled example
 
-```
-CompileLoop: mvn -B test
-Result: FAIL, exit code 1 (3.7s)
-
-Compile errors (2):
-  C:/Users/me/proj/src/main/java/fx/Broken.java:3:13
-    incompatible types: java.lang.String cannot be converted to int
-  C:/Users/me/proj/src/main/java/fx/Broken.java:4:16
-    cannot find symbol
-    symbol:   method undefinedMethod()
-    location: class fx.Broken
-
-Run:    20261012T115500Z-3f9a1c
-Log:    C:\Users\me\proj\target\compileloop\runs\20261012T115500Z-3f9a1c\build.log
-Report: C:\Users\me\proj\target\compileloop\runs\20261012T115500Z-3f9a1c\report.json
+```bash
+java -jar target/compileloop-0.1.0-SNAPSHOT.jar repair \
+  examples/broken-compilation-project \
+  --model qwen2.5-coder:7b
 ```
 
-Exit codes: `0` build passed, `1` build failed (compile errors or failing tests), `2` timed out, `3` the build could not be run (for example Maven not found), `64` bad usage. A missing Maven is reported as exit `3`, never as a failing project.
+CompileLoop will attempt to repair the example and verify the proposed patch in a disposable copy.
 
-## Using the library
+The resulting patch is written under:
 
-The engine can also be called from Java:
+```text
+examples/broken-compilation-project/target/compileloop/repairs/<run-id>/fix.patch
+```
+
+**The original example's `src/` files remain unchanged.** Review the generated patch before applying it.
+
+To apply a patch you have approved, run the following from the target project directory:
+
+```bash
+git apply "path/to/fix.patch"
+```
+
+Replace the example path with the actual path printed by CompileLoop.
+
+## Example Output
+
+A repair run can produce output similar to the following:
+
+```text
+CompileLoop repair
+Baseline build: FAIL (1 compile error(s), 0 test failure(s))
+
+Attempt 1: VERIFIED
+  Model says: Add a semicolon at the end of the return statement.
+  The build passes with this patch.
+
+Result: VERIFIED_CANDIDATE
+Human approval: REQUIRED
+
+Attempt 1 produced a patch whose build passes in a disposable copy.
+Your working tree is unchanged; review fix.patch and apply it yourself.
+```
+
+The exact output, timings, and repair result depend on the project and the model response.
+
+### What gets recorded?
+
+Each run preserves its own artifacts, including:
+
+- The original Maven build log
+- A structured JSON report
+- A human-readable report
+- The model's exact response
+- The raw and normalized patch
+- Patch validation results
+- Verification build output
+- Attempt statuses and timing information
+
+This makes it possible to inspect what the engine attempted and why a candidate was accepted or rejected.
+
+## Project Examples
+
+CompileLoop includes three small Maven projects for exercising different build scenarios:
+
+| Example | Purpose |
+|---|---|
+| `examples/passing-java-project` | A project whose build passes |
+| `examples/broken-compilation-project` | A project with an intentional compilation defect |
+| `examples/failing-test-project` | A project with a failing test |
+
+These examples help demonstrate baseline testing, diagnostic parsing, and candidate repair.
+
+## Commands
+
+| Command | Description |
+|---|---|
+| `test <dir>` | Run the project's Maven tests and produce a report |
+| `test <dir> --json` | Output the test report as JSON |
+| `repair <dir> --model <name>` | Generate, validate, and verify a candidate patch |
+| `repair <dir> --response-file <file>` | Replay a saved model response without making a live model request |
+| `report <run-dir>` | Re-render a stored report |
+
+The commands above are invoked through the packaged JAR.
+
+### Test options
+
+| Option | Description |
+|---|---|
+| `--timeout <seconds>` | Build timeout; defaults to 300 seconds |
+| `--json` | Output the JSON report instead of the text summary |
+
+Example:
+
+```bash
+java -jar target/compileloop-0.1.0-SNAPSHOT.jar test path/to/project
+```
+
+### Repair options
+
+| Option | Description |
+|---|---|
+| `--model <name>` | Ollama model to use |
+| `--response-file <file>` | Use a saved model response instead |
+| `--ollama-url <url>` | Ollama endpoint; defaults to `http://localhost:11434` |
+| `--attempts <n>` | Maximum repair attempts; defaults to 3, with a hard cap of 10 |
+| `--timeout <seconds>` | Build timeout per run; defaults to 300 seconds |
+| `--ai-timeout <seconds>` | Model request timeout per attempt; defaults to 300 seconds |
+| `--allow-test-changes` | Permit modifications under `src/test/java`; disabled by default |
+| `--json` | Output the JSON report instead of the text summary |
+
+### Exit codes
+
+**`test` command**
+
+| Exit code | Meaning |
+|---|---|
+| `0` | Build passed |
+| `1` | Build failed |
+| `2` | Build timed out |
+| `3` | Build could not be started |
+| `64` | Invalid command usage |
+
+**`repair` command**
+
+| Exit code | Meaning |
+|---|---|
+| `0` | Build already passed or a verified candidate was produced |
+| `1` | Repair unsuccessful or no progress made |
+| `3` | Model unavailable or infrastructure error |
+| `64` | Invalid command usage |
+
+## Architecture
+
+CompileLoop separates build execution, diagnostic parsing, AI interaction, patch validation, workspace management, and reporting.
+
+```mermaid
+flowchart TD
+    A[CLI] --> B[BuildRunner]
+    B --> C[BuildOutputParser]
+    C --> D[ParsedBuild]
+    D --> E[ContextBuilder]
+    E --> F[RepairEngine]
+    F --> G[AIProvider]
+    G --> H[ProposalParser]
+    H --> I[PatchValidator]
+    I --> J[PatchApplier]
+    J --> K[Disposable Workspace]
+    K --> L[BuildRunner Verification]
+    D --> M[ReportWriter]
+    F --> N[Repair Report]
+```
+
+### Core components
+
+- **`BuildRunner`** — Launches Maven using an argument list, captures output, enforces timeouts, and terminates the process tree when required.
+- **`BuildOutputParser`** — Converts Maven console output into structured compilation errors and test failures. Unrecognised error lines are retained separately.
+- **`ContextBuilder`** — Selects bounded diagnostic and source context from permitted source roots.
+- **`AIProvider`** — Defines the interface for AI backends. CompileLoop includes `OllamaProvider` and `MockProvider`.
+- **`ProposalParser`** — Accepts a strictly structured model response containing a summary, a diff, and optional assumptions.
+- **`UnifiedDiff`** — Parses unified diffs without directly modifying project files.
+- **`PatchPolicy`** — Defines allowed roots, extensions, protected paths, and change-size limits.
+- **`PatchValidator`** — Rejects patches that violate the configured policy.
+- **`PatchApplier`** — Applies validated patches using strict matching and all-or-nothing semantics.
+- **`Workspace`** — Creates a disposable project copy for verification.
+- **`RepairEngine`** — Coordinates repair attempts, verification, result recording, and early stopping conditions.
+- **`ReportWriter`** — Produces structured JSON and human-readable build reports.
+
+### Extensibility
+
+The `AIProvider` interface separates the repair engine from the underlying model. A new provider can be implemented without replacing the build, validation, or reporting pipeline.
+
+The included mock provider also allows the repair engine to be tested without depending on a live Ollama service.
+
+## Safety and Validation
+
+CompileLoop treats AI-generated output as untrusted input.
+
+### Strict response parsing
+
+The model must return exactly one JSON object with the expected fields:
+
+- `summary`
+- `diff`
+- `assumptions` (optional)
+
+Unexpected fields, Markdown fences, trailing text, and malformed responses are rejected.
+
+### Patch policy enforcement
+
+By default, modifications are restricted to permitted Java source files under:
+
+- `src/main/java`
+- `src/test/java`
+
+Changes to test sources are disabled by default and require the `--allow-test-changes` option.
+
+The validator rejects prohibited changes, including:
+
+- Build configuration files
+- CI configuration and Git metadata
+- Shell and script files
+- Binary files
+- Renames, copies, deletions, and file-mode changes
+- Symlinks
+- Absolute paths and path traversal
+- Reserved Windows device names
+- Changes exceeding configured limits
+
+The validator reports violations rather than accepting a partially valid patch.
+
+### Strict patch application
+
+The patch must match the expected source context. The engine can tolerate limited line-number drift, but ambiguous matches are rejected instead of guessed.
+
+Line endings are preserved, and a patch is applied all-or-nothing.
+
+### No model-generated shell commands
+
+CompileLoop does not concatenate AI-generated text into shell commands. Build processes are launched using argument lists.
+
+### No silent changes
+
+CompileLoop does not automatically apply a successful candidate to your original working tree. It writes a patch that you can inspect and apply yourself.
+
+### Explicit stopping conditions
+
+The repair loop can stop early when it encounters repeated identical patches or consecutive attempts that produce the same diagnostic signature.
+
+This prevents the engine from wasting its entire attempt budget repeating an unchanged, unsuccessful proposal.
+
+### Important security warning
+
+**CompileLoop is not a security sandbox.**
+
+Although verification takes place in a disposable project copy, Maven still executes project code and the patched code with the current user's permissions.
+
+Do not run CompileLoop against untrusted repositories unless you are prepared to execute their build logic in your environment.
+
+For the full discussion, see [`docs/known-limitations.md`](docs/known-limitations.md).
+
+## Using CompileLoop as a Java Library
+
+The build and repair components can also be called directly from Java.
+
+### Run a build and inspect diagnostics
 
 ```java
 BuildRunner runner = new BuildRunner();
-BuildResult result = runner.runMavenTests(Path.of("path/to/maven/project"));
 
-System.out.println(result.outcome());   // PASS, FAIL, TIMEOUT, START_ERROR, ...
+BuildResult result =
+        runner.runMavenTests(Path.of("path/to/maven/project"));
 
-for (var e : result.parsed().compileErrors()) {
-    System.out.printf("%s:%d:%d %s%n", e.file(), e.line(), e.column(), e.message());
+System.out.println(result.outcome());
+
+for (var error : result.parsed().compileErrors()) {
+    System.out.printf(
+            "%s:%d:%d %s%n",
+            error.file(),
+            error.line(),
+            error.column(),
+            error.message()
+    );
 }
-for (var f : result.parsed().testFailures()) {
-    System.out.printf("%s.%s (line %d): %s%n",
-            f.testClass(), f.testMethod(), f.line(), f.message());
+
+for (var failure : result.parsed().testFailures()) {
+    System.out.printf(
+            "%s.%s (line %d): %s%n",
+            failure.testClass(),
+            failure.testMethod(),
+            failure.line(),
+            failure.message()
+    );
 }
 ```
 
-Every run writes its artifacts to its own folder inside the project being built:
+### Run the repair engine
 
+```java
+RepairEngine engine = new RepairEngine(
+        new BuildRunner()::runMavenTests,
+        AIProvider.ollama(
+                "http://localhost:11434",
+                "qwen2.5-coder:7b"
+        ),
+        RepairEngine.Config.defaults()
+);
+
+RepairResult result =
+        engine.repair(Path.of("path/to/maven/project"));
+
+if (result.verifiedCandidate()) {
+    Path patch = result.patchFile();
+
+    // Review the patch before applying it.
+}
 ```
-target/compileloop/runs/<runId>/
-  build.log      full, unmodified Maven output
-  report.json    structured report (outcome, diagnostics, categories, raw excerpts)
+
+These examples illustrate the intended API. Adapt imports and package names to the version you are using.
+
+## Benchmark
+
+CompileLoop includes 20 small Maven fixtures, each containing one deliberate defect. The benchmark is designed to evaluate repair performance across multiple locally hosted code models.
+
+| Model | Repair rate | Compilation recovery | Test recovery | Mean attempts | Mean latency |
+|---|---:|---:|---:|---:|---:|
+| `qwen2.5-coder:7b` | Pending | Pending | Pending | Pending | Pending |
+| `qwen2.5-coder:1.5b` | Pending | Pending | Pending | Pending | Pending |
+| `deepseek-coder:6.7b` | Pending | Pending | Pending | Pending | Pending |
+
+Benchmark results have not yet been populated. No performance claims should be inferred from the table until the measurements are available.
+
+See [`benchmarks/README.md`](benchmarks/README.md) for the methodology and per-fixture results.
+
+To run the benchmark:
+
+```bash
+bash benchmarks/run.sh
 ```
 
-`<runId>` is a UTC timestamp plus a random suffix, for example `20261012T115500Z-3f9a1c`. Runs are never overwritten. A build that never started (bad directory, no `pom.xml`, no Maven) creates no run folder.
+## Project Structure
 
-## Safety model for AI output
-
-Model output is untrusted data. It must be one JSON object (`summary`, `diff`, optional `assumptions`); the diff is parsed strictly and then validated against a policy before anything could be applied. By default only `.java` files under `src/main/java` and `src/test/java` may change; build files, CI, `.git`, scripts, binaries, renames, copies, deletions, mode changes, symlinks, absolute paths and `..` are all rejected, and every violation is listed. Applying is strict too: every context and removed line must match the file exactly (only line numbers may drift, within 50 lines, and an ambiguous match is refused), the whole patch applies or nothing is written, and line endings are preserved.
-
-## Repairing a project
-
+```text
+compileloop/
+├── src/
+│   ├── main/java/dev/compileloop/
+│   │   ├── cli/
+│   │   │   ├── Main.java
+│   │   │   ├── Cli.java
+│   │   │   └── RepairOptions.java
+│   │   ├── build/
+│   │   │   ├── BuildRunner.java
+│   │   │   ├── BuildResult.java
+│   │   │   ├── BuildOutcome.java
+│   │   │   ├── BuildOutputParser.java
+│   │   │   ├── ParsedBuild.java
+│   │   │   ├── DiagnosticCategory.java
+│   │   │   ├── ReportWriter.java
+│   │   │   └── TextReport.java
+│   │   └── repair/
+│   │       ├── RepairEngine.java
+│   │       ├── RepairResult.java
+│   │       ├── RepairReport.java
+│   │       ├── AIProvider.java
+│   │       ├── RepairContext.java
+│   │       ├── ContextBuilder.java
+│   │       ├── ProposalParser.java
+│   │       ├── UnifiedDiff.java
+│   │       ├── UnifiedDiffWriter.java
+│   │       ├── PatchPolicy.java
+│   │       ├── PatchValidator.java
+│   │       ├── PatchApplier.java
+│   │       ├── Workspace.java
+│   │       ├── MockProvider.java
+│   │       └── OllamaProvider.java
+│   └── test/
+│       └── resources/maven/
+├── benchmarks/
+│   └── fixtures/
+├── examples/
+│   ├── passing-java-project/
+│   ├── broken-compilation-project/
+│   └── failing-test-project/
+├── docs/
+│   └── known-limitations.md
+├── pom.xml
+└── README.md
 ```
-compileloop repair <project-dir> --model <name> [--ollama-url http://localhost:11434] [--attempts 3]
+
+The repository also contains CI configuration, benchmark tooling, test fixtures, and additional documentation.
+
+## Known Limitations
+
+CompileLoop is an experimental code repair engine, and several limitations remain:
+
+- **Model reliability:** A model may misdescribe what its patch actually changes. Always inspect the diff instead of relying on the model's summary.
+- **Limited isolation:** A disposable workspace protects the original source files from direct patch application, but it does not isolate code execution from the host system.
+- **Regression detection:** A candidate may pass the target build while breaking behaviour that was previously working. Regression detection is a planned improvement.
+- **Build-tool scope:** The current implementation targets Maven projects and Java source files.
+- **Verification scope:** A passing build only verifies the checks that actually ran. It does not establish correctness, security, or production readiness.
+
+More details are available in [`docs/known-limitations.md`](docs/known-limitations.md).
+
+## Development
+
+Run the test suite:
+
+```bash
+mvn -B clean test
 ```
 
-1. The project is built. If it passes there is nothing to do. If the build could not run, or failed with nothing recognised (for example a dependency could not be downloaded), the model is never asked.
-2. The model gets a bounded context (the diagnostics and the relevant source files) and proposes one patch.
-3. The patch is validated, then applied to a fresh temporary copy of the project, and the build is re-run in that copy.
-4. A passing build in the copy is a verified fix. It is written to `target/compileloop/repairs/<run>/fix.patch` and **never** applied to your working tree. Review it, then run `git apply` yourself.
-5. Failed attempts are retried (up to `--attempts`), and the next prompt says briefly why the earlier ones failed.
+Build the runnable JAR:
 
-By default test files are protected: a "fix" that edits the tests proves nothing. `--allow-test-changes` lifts that, and the report then warns that the patch changes tests.
+```bash
+mvn -B -DskipTests package
+```
 
-`--response-file <file>` replays a canned model answer instead of calling a model, so you can try the whole loop offline.
+The project's test suite exercises the repair pipeline and uses a fake Ollama server where appropriate, allowing CI tests to run without downloading a model.
 
-**Important:** the temporary copy is not a sandbox. Verifying a patch means running your build and tests on patched code, and that code runs with your permissions. Use it on projects and models you trust, or inside a container or VM.
-
-Each run keeps an audit trail under `target/compileloop/repairs/<run>/`: `repair.json` (verdict, config, every attempt), and per attempt `response.txt` (the model's exact answer), `proposal.diff`, `attempt.json` and `build.log`.
-
-## Design notes
-
-- **No shell strings.** Processes are started from an argument list, never through a shell.
-- **Output is drained concurrently**, so a chatty build cannot block on a full pipe, and in-memory output is capped (the full log goes to disk).
-- **The whole process tree is killed on timeout**, not just the parent.
-- **Infrastructure failures are never confused with broken source code.** A missing `mvn` is `START_ERROR`, not `FAIL`.
-- **The parser degrades quietly.** Unrecognised output yields "nothing found" rather than an exception.
-- **Reports never claim more than the evidence.** A failed build with nothing recognised says exactly that, and keeps the raw log; an infrastructure failure is labelled as one.
-- **Validated before launch.** The runner checks the directory and `pom.xml` exist before starting Maven.
+CI is configured for Ubuntu and Windows using JDK 17.
 
 ## Roadmap
 
-1. Verified Java repair: build, diagnose, propose, patch in a copy, re-verify, report.
-2. Self-repair: use the same loop on CompileLoop's own failing tests.
-3. Multi-language migration through adapters, staged and behind human approval.
+### Completed
 
-AI-generated patches are proposals. They are never applied silently to your working tree.
+- Maven build execution and diagnostic capture
+- Structured build reports
+- Local-model integration through Ollama
+- Strict proposal parsing and patch validation
+- Candidate patch application in a disposable workspace
+- Verification builds
+- Repair attempt history and audit artifacts
+- Automated tests for the repair pipeline
 
-## Project layout
+### Next
 
-```
-src/main/java/dev/compileloop/cli/
-  Main.java               entry point for the jar
-  Cli.java                argument parsing and report formatting
-src/main/java/dev/compileloop/build/
-  BuildRunner.java        runs Maven with timeout, draining and kill-tree
-  BuildResult.java        outcome, exit code, log path, output tail, parsed diagnostics
-  BuildOutcome.java       PASS / FAIL / TIMEOUT / START_ERROR / CANCELLED / INFRA_ERROR
-  BuildOutputParser.java  Maven text -> compile errors, test failures, summary
-  ParsedBuild.java        the structured result of parsing
-  DiagnosticCategory.java coarse, stable classification of each diagnostic
-  ReportWriter.java       builds report.json (no JSON library needed)
-src/main/java/dev/compileloop/repair/
-  RepairEngine.java       the loop: ask, validate, apply in a copy, build the copy, record
-  Workspace.java          disposable project copy (no VCS data, no links, deleted on close)
-  PatchApplier.java       strict, all-or-nothing application of a validated diff
-  RepairResult.java       verdict, attempts and statuses
-  RepairReport.java       JSON for repair.json / attempt.json
-  AIProvider.java         the only thing a model backend implements: context in, proposal out
-  RepairContext.java      what a model may see (diagnostics, bounded source files, rules)
-  ContextBuilder.java     deterministic, bounded context; reads only allowed source roots
-  ProposalParser.java     strict JSON schema for model output; anything else is rejected
-  UnifiedDiff.java        strict unified-diff parser (describes a diff, never touches files)
-  PatchPolicy.java        limits: roots, extensions, protected paths, file/line counts
-  PatchValidator.java     accepts a diff only if it has zero violations; never writes
-  MockProvider.java       scripted responses for tests and offline runs
-  OllamaProvider.java     local model over HTTP; no redirects, bounded response
-src/test/resources/maven/ real Maven output captured on Windows, used as parser fixtures
-```
+- Regression detection to identify candidates that break previously passing tests
+- Stronger execution isolation through a container-based workspace
+- Completed benchmark runs with published measurements
+
+### Longer term
+
+- Self-repair: use CompileLoop's own repair pipeline to investigate failures in its test suite
+- Multi-language support, starting with Python
+- Language-specific adapters for different build systems
+- A staged code migration pipeline for moving projects between languages
+
+The longer-term goal is to evolve CompileLoop from a Java-focused repair engine into an extensible framework for testing, repairing, and eventually migrating software under human supervision.
+
+## Design Principle
+
+> AI-generated patches are proposals, not instructions.
+>
+> CompileLoop validates the proposal, tests it, records the evidence, and leaves the final decision to the developer.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+This project is licensed under the MIT License. See [`LICENSE`](LICENSE) for details.
+
+
+
