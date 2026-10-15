@@ -21,6 +21,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -250,13 +251,16 @@ class RepairEngineTest {
 
         RepairResult r = run(ai);
 
-        assertEquals(Verdict.NOT_FIXED, r.verdict());
-        assertEquals(3, r.attempts().size());
+        // The second attempt produced the same patch as the first: the loop
+        // stops with NO_PROGRESS rather than burn the third try on the same
+        // wrong answer.
+        assertEquals(Verdict.NO_PROGRESS, r.verdict());
+        assertEquals(2, r.attempts().size());
         assertTrue(r.attempts().stream().allMatch(a -> a.status() == Status.STILL_FAILING));
         assertNull(r.patchFile());
         assertFalse(Files.exists(r.reportDirectory().resolve("fix.patch")));
-        assertTrue(ai.receivedContexts().get(2).notes().stream().anyMatch(n -> n.contains("still fails")),
-                ai.receivedContexts().get(2).notes().toString());
+        assertTrue(ai.receivedContexts().get(1).notes().stream().anyMatch(n -> n.contains("still fails")),
+                ai.receivedContexts().get(1).notes().toString());
         assertWorkingTreeUntouched();
         for (Path d : directoriesBuilt.subList(1, directoriesBuilt.size())) {
             assertFalse(Files.exists(d), "every copy is deleted");
@@ -265,13 +269,22 @@ class RepairEngineTest {
 
     @Test
     void stopsAtTheAttemptLimit() throws Exception {
-        MockProvider ai = MockProvider.returning(
-                response("1", STILL_BROKEN_DIFF), response("2", STILL_BROKEN_DIFF), response("3", STILL_BROKEN_DIFF));
+        // Two distinct broken patches, one attempt allowed. The first runs; the
+        // loop hits the cap before the second is even offered. Using distinct
+        // patches avoids the fingerprint stop, so this really exercises the cap.
+        String brokenY = diff("--- a/src/main/java/fx/Calc.java", "+++ b/src/main/java/fx/Calc.java",
+                "@@ -2,4 +2,4 @@", " public class Calc {", "     public int add(int a, int b) {",
+                "-        return \"x\";", "+        return \"y\";", "     }");
+        String brokenZ = diff("--- a/src/main/java/fx/Calc.java", "+++ b/src/main/java/fx/Calc.java",
+                "@@ -2,4 +2,4 @@", " public class Calc {", "     public int add(int a, int b) {",
+                "-        return \"x\";", "+        return \"z\";", "     }");
 
-        RepairResult r = run(ai, RepairEngine.Config.defaults().withMaxAttempts(2));
+        MockProvider ai = MockProvider.returning(response("1", brokenY), response("2", brokenZ));
 
-        assertEquals(2, r.attempts().size());
-        assertEquals(2, ai.receivedContexts().size());
+        RepairResult r = run(ai, RepairEngine.Config.defaults().withMaxAttempts(1));
+
+        assertEquals(1, r.attempts().size());
+        assertEquals(1, ai.receivedContexts().size());
     }
 
     @Test
@@ -444,5 +457,69 @@ class RepairEngineTest {
             threw = true;
         }
         assertTrue(threw);
+    }
+
+    // ---- stop conditions ----------------------------------------------------------------
+
+    @Test
+    void stopsWhenTheModelRepeatsTheSamePatch() throws Exception {
+        MockProvider ai = MockProvider.returning(
+                response("same answer", STILL_BROKEN_DIFF),
+                response("same answer again", STILL_BROKEN_DIFF),
+                response("third time", STILL_BROKEN_DIFF));
+
+        RepairResult r = run(ai);
+
+        assertEquals(Verdict.NO_PROGRESS, r.verdict());
+        assertEquals(2, r.attempts().size(), "stopped at the second identical patch");
+        assertTrue(r.message().contains("same patch"), r.message());
+    }
+
+    @Test
+    void stopsWhenDifferentPatchesProduceTheSameDiagnostics() throws Exception {
+        // Three DIFFERENT patches, each removing the same broken line and
+        // adding a different wrong value, so each applies cleanly on its own
+        // fresh workspace. The fake build reports them identically, so the
+        // diagnostic signature is the same for each: no new information.
+        String brokenY = diff("--- a/src/main/java/fx/Calc.java", "+++ b/src/main/java/fx/Calc.java",
+                "@@ -2,4 +2,4 @@", " public class Calc {", "     public int add(int a, int b) {",
+                "-        return \"x\";", "+        return \"y\";", "     }");
+        String brokenZ = diff("--- a/src/main/java/fx/Calc.java", "+++ b/src/main/java/fx/Calc.java",
+                "@@ -2,4 +2,4 @@", " public class Calc {", "     public int add(int a, int b) {",
+                "-        return \"x\";", "+        return \"z\";", "     }");
+        String brokenW = diff("--- a/src/main/java/fx/Calc.java", "+++ b/src/main/java/fx/Calc.java",
+                "@@ -2,4 +2,4 @@", " public class Calc {", "     public int add(int a, int b) {",
+                "-        return \"x\";", "+        return \"w\";", "     }");
+
+        MockProvider ai = MockProvider.returning(
+                response("try y", brokenY), response("try z", brokenZ), response("try w", brokenW));
+
+        RepairResult r = run(ai);
+
+        assertEquals(Verdict.NO_PROGRESS, r.verdict());
+        assertEquals(2, r.attempts().size());
+        assertTrue(r.message().contains("same diagnostics"), r.message());
+    }
+
+    @Test
+    void diagnosticSignaturesDistinguishDifferentFailures() {
+        // The signature is a pure helper; test it directly so the engine-level
+        // stop condition is not the only thing guarding it.
+        ParsedBuild y = errorsWithMessage("y");
+        ParsedBuild z = errorsWithMessage("z");
+        ParsedBuild yAgain = errorsWithMessage("y");
+
+        assertEquals(RepairEngine.diagnosticSignature(y), RepairEngine.diagnosticSignature(yAgain));
+        assertNotEquals(RepairEngine.diagnosticSignature(y), RepairEngine.diagnosticSignature(z));
+        assertNotEquals(RepairEngine.diagnosticSignature(ParsedBuild.empty()),
+                RepairEngine.diagnosticSignature(y));
+    }
+
+    private static ParsedBuild errorsWithMessage(String marker) {
+        List<ParsedBuild.CompileError> list = new ArrayList<>();
+        list.add(new ParsedBuild.CompileError("src/main/java/fx/Calc.java", 4, 16,
+                "incompatible types: String \"" + marker + "\" cannot be converted to int",
+                DiagnosticCategory.TYPE_MISMATCH, "raw"));
+        return new ParsedBuild(list, List.of(), Optional.empty());
     }
 }

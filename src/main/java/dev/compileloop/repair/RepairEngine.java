@@ -16,9 +16,11 @@ import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * The repair loop. For each attempt it asks the provider for a proposal, checks
@@ -30,6 +32,10 @@ import java.util.Map;
  * Every attempt keeps the model's raw answer, the diff, the validation result and
  * the build log under {@code target/compileloop/repairs/<runId>/}, written as it
  * happens, so a crash still leaves an audit trail.
+ *
+ * <p>The loop stops early when an attempt is not making progress: the model
+ * repeats the same patch, or the diagnostic signature does not change between
+ * consecutive still-failing attempts.
  */
 public final class RepairEngine {
 
@@ -134,6 +140,9 @@ public final class RepairEngine {
         // 2. attempts
         List<AttemptRecord> attempts = new ArrayList<>();
         List<String> feedback = new ArrayList<>();
+        Set<String> seenPatches = new HashSet<>();
+        String lastDiagnosticSig = null;
+        String stopReason = null;
         Path fix = null;
         for (int n = 1; n <= config.maxAttempts(); n++) {
             AttemptRecord a;
@@ -145,6 +154,7 @@ public final class RepairEngine {
             }
             attempts.add(a);
             writeAttemptFiles(dir, a);
+
             if (a.status() == Status.VERIFIED) {
                 fix = dir.resolve("fix.patch");
                 try {
@@ -162,6 +172,30 @@ public final class RepairEngine {
                 }
                 break;
             }
+
+            // Stop condition: repeated identical patch. A model that returns the
+            // same diff again is stuck; a third identical attempt is a waste.
+            if (a.diff() != null && !seenPatches.add(diffFingerprint(a.diff()))) {
+                stopReason = "Stopped after " + n + " of " + config.maxAttempts()
+                        + " attempts: the model produced the same patch as an earlier attempt; "
+                        + "retrying would not help.";
+                break;
+            }
+
+            // Stop condition: no new information between attempts. Two consecutive
+            // still-failing attempts with the same diagnostic signature mean the
+            // feedback loop is dead.
+            if (a.status() == Status.STILL_FAILING && a.build() != null) {
+                String sig = diagnosticSignature(a.build().parsed());
+                if (sig.equals(lastDiagnosticSig)) {
+                    stopReason = "Stopped after " + n + " of " + config.maxAttempts()
+                            + " attempts: the build still fails with the same diagnostics as the "
+                            + "previous attempt; retrying would not help.";
+                    break;
+                }
+                lastDiagnosticSig = sig;
+            }
+
             if (a.status() == Status.AI_ERROR && (a.aiErrorKind() == AIProviderException.Kind.UNAVAILABLE
                     || a.aiErrorKind() == AIProviderException.Kind.CONTEXT_OVERFLOW)) {
                 break; // retrying cannot help
@@ -175,6 +209,9 @@ public final class RepairEngine {
                     "Attempt " + last.number() + " produced a patch whose build passes in a disposable copy. "
                             + "Your working tree is unchanged; review fix.patch and apply it yourself.",
                     started);
+        }
+        if (stopReason != null) {
+            return finish(Verdict.NO_PROGRESS, runId, dir, baseline, attempts, null, warnings, stopReason, started);
         }
         boolean allAiDown = attempts.stream().allMatch(x -> x.status() == Status.AI_ERROR
                 && (x.aiErrorKind() == AIProviderException.Kind.UNAVAILABLE
@@ -290,6 +327,48 @@ public final class RepairEngine {
             return "";
         }
         return s.length() > FEEDBACK_CHARS ? s.substring(0, FEEDBACK_CHARS) + "..." : s;
+    }
+
+    // ---- stop-condition helpers -------------------------------------------------------
+
+    /**
+     * A stable fingerprint of a diff, used to detect "the model said the same
+     * thing again". Line endings are normalised so CRLF vs LF does not count as
+     * a new attempt. {@code String.hashCode} is sufficient here: a collision
+     * only causes an early stop, never a safety failure.
+     */
+    static String diffFingerprint(String diff) {
+        String normalized = diff.replace("\r\n", "\n").replace('\r', '\n');
+        return Integer.toHexString(normalized.hashCode());
+    }
+
+    /**
+     * A stable description of what is wrong with a build: file, line, category
+     * and the first line of every message, plus the test summary. Two attempts
+     * with the same signature are not making progress.
+     */
+    static String diagnosticSignature(ParsedBuild p) {
+        StringBuilder sb = new StringBuilder();
+        for (ParsedBuild.CompileError e : p.compileErrors()) {
+            sb.append("C:").append(e.file()).append(':').append(e.line()).append(':')
+                    .append(e.category()).append(':').append(firstLine(e.message())).append('\n');
+        }
+        for (ParsedBuild.TestFailure f : p.testFailures()) {
+            sb.append("T:").append(f.testClass()).append('.').append(f.testMethod()).append(':')
+                    .append(f.kind()).append(':').append(firstLine(f.message())).append('\n');
+        }
+        p.testSummary().ifPresent(s -> sb.append("S:").append(s.run()).append('/')
+                .append(s.failures()).append('/').append(s.errors()).append('/')
+                .append(s.skipped()).append('\n'));
+        return sb.toString();
+    }
+
+    private static String firstLine(String s) {
+        if (s == null) {
+            return "";
+        }
+        int nl = s.indexOf('\n');
+        return nl < 0 ? s : s.substring(0, nl);
     }
 
     // ---- files ---------------------------------------------------------------------------

@@ -28,6 +28,11 @@ public record RepairResult(
         VERIFIED_CANDIDATE,
         /** Attempts were used up without a verified fix. */
         NOT_FIXED,
+        /**
+         * The loop stopped early because an attempt was not making progress:
+         * the model repeated the same patch, or the diagnostics did not change.
+         */
+        NO_PROGRESS,
         /** The model could not be reached or could not take the context. */
         AI_UNAVAILABLE,
         /** The build could not be run, or failed in a way this tool does not repair. */
