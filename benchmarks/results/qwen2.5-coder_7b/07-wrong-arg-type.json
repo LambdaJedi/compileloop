@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "runId": "20261015T124922Z-919737",
+  "startedAt": "2026-10-15T12:49:22.520323500Z",
+  "verdict": "NOT_FIXED",
+  "humanApprovalRequired": false,
+  "message": "No attempt produced a verified fix (3 tried).",
+  "config": {
+    "maxAttempts": 3,
+    "buildTimeoutSeconds": 300,
+    "allowedRoots": [
+      "src/main/java",
+      "src/test/java"
+    ],
+    "allowedExtensions": [
+      ".java"
+    ],
+    "protectedPaths": [
+      "src/test/java"
+    ],
+    "maxFiles": 5,
+    "maxChangedLines": 200
+  },
+  "baseline": {
+    "outcome": "FAIL",
+    "exitCode": 1,
+    "durationMillis": 3435,
+    "compileErrors": 1,
+    "testFailures": 0
+  },
+  "attempts": [
+    {
+      "number": 1,
+      "status": "DID_NOT_APPLY",
+      "durationMillis": 11569,
+      "detail": "The patch did not apply: src/main/java/bench/Printer.java, hunk 1: the lines this hunk expects were not found within 50 lines of line 11. First expected line: \"public String banner(String title) {\"",
+      "summary": "Fix type mismatch in banner method by converting string to integer.",
+      "assumptions": [
+        "The `repeat` method is designed to take an integer for the number of times to repeat the string."
+      ],
+      "modifiesTests": false,
+      "diffChars": 309,
+      "validation": {
+        "accepted": true,
+        "violations": []
+      },
+      "apply": {
+        "applied": false,
+        "errors": [
+          "src/main/java/bench/Printer.java, hunk 1: the lines this hunk expects were not found within 50 lines of line 11. First expected line: \"public String banner(String title) {\""
+        ],
+        "changes": []
+      }
+    },
+    {
+      "number": 2,
+      "status": "DID_NOT_APPLY",
+      "durationMillis": 8729,
+      "detail": "The patch did not apply: the patch would not change any file",
+      "summary": "Fix type mismatch in banner method by converting string to integer.",
+      "assumptions": [
+        "The `repeat` method is intended to repeat a string a specified number of times."
+      ],
+      "modifiesTests": false,
+      "diffChars": 187,
+      "validation": {
+        "accepted": true,
+        "violations": []
+      },
+      "apply": {
+        "applied": false,
+        "errors": [
+          "the patch would not change any file"
+        ],
+        "changes": []
+      }
+    },
+    {
+      "number": 3,
+      "status": "DID_NOT_APPLY",
+      "durationMillis": 10428,
+      "detail": "The patch did not apply: src/main/java/bench/Printer.java, hunk 1: the lines this hunk expects were not found within 50 lines of line 11. First expected line: \"public String banner(String title) {\"",
+      "summary": "Fix type mismatch in banner method by converting the string argument to an integer.",
+      "assumptions": [
+        "The intention of the banner method is to repeat the title three times."
+      ],
+      "modifiesTests": false,
+      "diffChars": 329,
+      "validation": {
+        "accepted": true,
+        "violations": []
+      },
+      "apply": {
+        "applied": false,
+        "errors": [
+          "src/main/java/bench/Printer.java, hunk 1: the lines this hunk expects were not found within 50 lines of line 11. First expected line: \"public String banner(String title) {\""
+        ],
+        "changes": []
+      }
+    }
+  ],
+  "patchFile": null,
+  "warnings": [],
+  "note": "A passing build is evidence, not proof of correctness. The patch was never applied to your working tree. Review it before applying."
+}

@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "runId": "20261015T130042Z-2bd145",
+  "startedAt": "2026-10-15T13:00:42.872121600Z",
+  "verdict": "NOT_FIXED",
+  "humanApprovalRequired": false,
+  "message": "No attempt produced a verified fix (3 tried).",
+  "config": {
+    "maxAttempts": 3,
+    "buildTimeoutSeconds": 300,
+    "allowedRoots": [
+      "src/main/java",
+      "src/test/java"
+    ],
+    "allowedExtensions": [
+      ".java"
+    ],
+    "protectedPaths": [
+      "src/test/java"
+    ],
+    "maxFiles": 5,
+    "maxChangedLines": 200
+  },
+  "baseline": {
+    "outcome": "FAIL",
+    "exitCode": 1,
+    "durationMillis": 3861,
+    "compileErrors": 1,
+    "testFailures": 0
+  },
+  "attempts": [
+    {
+      "number": 1,
+      "status": "REJECTED",
+      "durationMillis": 9236,
+      "detail": "The patch was rejected: MALFORMED_DIFF: line 11: unrecognised line: ```",
+      "summary": "Add a closing brace to the increment method.",
+      "assumptions": [],
+      "modifiesTests": false,
+      "diffChars": 211,
+      "validation": {
+        "accepted": false,
+        "violations": [
+          {
+            "code": "MALFORMED_DIFF",
+            "path": null,
+            "message": "line 11: unrecognised line: ```"
+          }
+        ]
+      }
+    },
+    {
+      "number": 2,
+      "status": "DID_NOT_APPLY",
+      "durationMillis": 8954,
+      "detail": "The patch did not apply: src/main/java/bench/Counter.java, hunk 1: the lines this hunk expects were not found within 50 lines of line 10. First expected line: \"public int increment() {\"",
+      "summary": "Add a closing brace to the increment method.",
+      "assumptions": [],
+      "modifiesTests": false,
+      "diffChars": 209,
+      "validation": {
+        "accepted": true,
+        "violations": []
+      },
+      "apply": {
+        "applied": false,
+        "errors": [
+          "src/main/java/bench/Counter.java, hunk 1: the lines this hunk expects were not found within 50 lines of line 10. First expected line: \"public int increment() {\""
+        ],
+        "changes": []
+      }
+    },
+    {
+      "number": 3,
+      "status": "DID_NOT_APPLY",
+      "durationMillis": 9094,
+      "detail": "The patch did not apply: src/main/java/bench/Counter.java, hunk 1: the lines this hunk expects were not found within 50 lines of line 10. First expected line: \"public int increment() {\"",
+      "summary": "Add a closing brace to the increment method.",
+      "assumptions": [
+        "The method increment is supposed to return an integer."
+      ],
+      "modifiesTests": false,
+      "diffChars": 207,
+      "validation": {
+        "accepted": true,
+        "violations": []
+      },
+      "apply": {
+        "applied": false,
+        "errors": [
+          "src/main/java/bench/Counter.java, hunk 1: the lines this hunk expects were not found within 50 lines of line 10. First expected line: \"public int increment() {\""
+        ],
+        "changes": []
+      }
+    }
+  ],
+  "patchFile": null,
+  "warnings": [],
+  "note": "A passing build is evidence, not proof of correctness. The patch was never applied to your working tree. Review it before applying."
+}

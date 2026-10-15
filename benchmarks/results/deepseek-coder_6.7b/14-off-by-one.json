@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "runId": "20261015T130829Z-4b562b",
+  "startedAt": "2026-10-15T13:08:29.100730900Z",
+  "verdict": "NOT_FIXED",
+  "humanApprovalRequired": false,
+  "message": "No attempt produced a verified fix (3 tried).",
+  "config": {
+    "maxAttempts": 3,
+    "buildTimeoutSeconds": 300,
+    "allowedRoots": [
+      "src/main/java",
+      "src/test/java"
+    ],
+    "allowedExtensions": [
+      ".java"
+    ],
+    "protectedPaths": [
+      "src/test/java"
+    ],
+    "maxFiles": 5,
+    "maxChangedLines": 200
+  },
+  "baseline": {
+    "outcome": "FAIL",
+    "exitCode": 1,
+    "durationMillis": 4691,
+    "compileErrors": 0,
+    "testFailures": 1,
+    "tests": {
+      "run": 1,
+      "failures": 1,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "attempts": [
+    {
+      "number": 1,
+      "status": "DID_NOT_APPLY",
+      "durationMillis": 11539,
+      "detail": "The patch did not apply: src/main/java/bench/Range.java, hunk 1: the lines this hunk expects were not found within 50 lines of line 7. First expected line: \"public int count(int from, int toInclusive) {\"",
+      "summary": "Add semicolon at the end of the return statement in the count method of the Range class.",
+      "assumptions": [
+        "The return statement is the last statement of the method."
+      ],
+      "modifiesTests": false,
+      "diffChars": 195,
+      "validation": {
+        "accepted": true,
+        "violations": []
+      },
+      "apply": {
+        "applied": false,
+        "errors": [
+          "src/main/java/bench/Range.java, hunk 1: the lines this hunk expects were not found within 50 lines of line 7. First expected line: \"public int count(int from, int toInclusive) {\""
+        ],
+        "changes": []
+      }
+    },
+    {
+      "number": 2,
+      "status": "REJECTED",
+      "durationMillis": 9329,
+      "detail": "The patch was rejected: MALFORMED_DIFF: line 3: malformed hunk header: @@ -4,6 +4,7  @@",
+      "summary": "Add semicolon at the end of the method declaration in Range.java",
+      "assumptions": [
+        "The method declaration is complete"
+      ],
+      "modifiesTests": false,
+      "diffChars": 191,
+      "validation": {
+        "accepted": false,
+        "violations": [
+          {
+            "code": "MALFORMED_DIFF",
+            "path": null,
+            "message": "line 3: malformed hunk header: @@ -4,6 +4,7  @@"
+          }
+        ]
+      }
+    },
+    {
+      "number": 3,
+      "status": "REJECTED",
+      "durationMillis": 10529,
+      "detail": "The patch was rejected: MALFORMED_DIFF: line 3: malformed hunk header: @@ -5,4 +5,4  @@",
+      "summary": "Add semicolon at the end of the return statement in the count method of the Range class.",
+      "assumptions": [],
+      "modifiesTests": false,
+      "diffChars": 245,
+      "validation": {
+        "accepted": false,
+        "violations": [
+          {
+            "code": "MALFORMED_DIFF",
+            "path": null,
+            "message": "line 3: malformed hunk header: @@ -5,4 +5,4  @@"
+          }
+        ]
+      }
+    }
+  ],
+  "patchFile": null,
+  "warnings": [],
+  "note": "A passing build is evidence, not proof of correctness. The patch was never applied to your working tree. Review it before applying."
+}

@@ -1,0 +1,141 @@
+{
+  "schemaVersion": 1,
+  "runId": "20261015T125117Z-8c2442",
+  "startedAt": "2026-10-15T12:51:17.982164600Z",
+  "verdict": "NOT_FIXED",
+  "humanApprovalRequired": false,
+  "message": "No attempt produced a verified fix (3 tried).",
+  "config": {
+    "maxAttempts": 3,
+    "buildTimeoutSeconds": 300,
+    "allowedRoots": [
+      "src/main/java",
+      "src/test/java"
+    ],
+    "allowedExtensions": [
+      ".java"
+    ],
+    "protectedPaths": [
+      "src/test/java"
+    ],
+    "maxFiles": 5,
+    "maxChangedLines": 200
+  },
+  "baseline": {
+    "outcome": "FAIL",
+    "exitCode": 1,
+    "durationMillis": 4061,
+    "compileErrors": 1,
+    "testFailures": 0
+  },
+  "attempts": [
+    {
+      "number": 1,
+      "status": "STILL_FAILING",
+      "durationMillis": 15582,
+      "detail": "The patch applied, but the build still fails: 4 compile error(s), 0 test failure(s).",
+      "summary": "Declare the missing variable 'factor' in the Doubler class.",
+      "assumptions": [
+        "factor should be 2 for the purpose of this example"
+      ],
+      "modifiesTests": false,
+      "diffChars": 271,
+      "validation": {
+        "accepted": true,
+        "violations": []
+      },
+      "apply": {
+        "applied": true,
+        "errors": [],
+        "changes": [
+          {
+            "path": "src/main/java/bench/Doubler.java",
+            "kind": "MODIFY",
+            "added": 1,
+            "removed": 0
+          }
+        ]
+      },
+      "build": {
+        "outcome": "FAIL",
+        "exitCode": 1,
+        "durationMillis": 4600,
+        "compileErrors": 4,
+        "testFailures": 0
+      }
+    },
+    {
+      "number": 2,
+      "status": "STILL_FAILING",
+      "durationMillis": 14388,
+      "detail": "The patch applied, but the build still fails: 1 compile error(s), 0 test failure(s).",
+      "summary": "Declare the 'factor' variable in the 'Doubler' class.",
+      "assumptions": [
+        "The 'factor' variable is intended to be 2."
+      ],
+      "modifiesTests": false,
+      "diffChars": 247,
+      "validation": {
+        "accepted": true,
+        "violations": []
+      },
+      "apply": {
+        "applied": true,
+        "errors": [],
+        "changes": [
+          {
+            "path": "src/main/java/bench/Doubler.java",
+            "kind": "MODIFY",
+            "added": 1,
+            "removed": 0
+          }
+        ]
+      },
+      "build": {
+        "outcome": "FAIL",
+        "exitCode": 1,
+        "durationMillis": 4041,
+        "compileErrors": 1,
+        "testFailures": 0
+      }
+    },
+    {
+      "number": 3,
+      "status": "STILL_FAILING",
+      "durationMillis": 14800,
+      "detail": "The patch applied, but the build still fails: 4 compile error(s), 0 test failure(s).",
+      "summary": "Declare the 'factor' variable in the 'Doubler' class.",
+      "assumptions": [
+        "factor is intended to be a constant with a value of 2"
+      ],
+      "modifiesTests": false,
+      "diffChars": 271,
+      "validation": {
+        "accepted": true,
+        "violations": []
+      },
+      "apply": {
+        "applied": true,
+        "errors": [],
+        "changes": [
+          {
+            "path": "src/main/java/bench/Doubler.java",
+            "kind": "MODIFY",
+            "added": 1,
+            "removed": 0
+          }
+        ]
+      },
+      "build": {
+        "outcome": "FAIL",
+        "exitCode": 1,
+        "durationMillis": 3899,
+        "compileErrors": 4,
+        "testFailures": 0
+      }
+    }
+  ],
+  "patchFile": null,
+  "warnings": [],
+  "note": "A passing build is evidence, not proof of correctness. The patch was never applied to your working tree. Review it before applying."
+}

@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "runId": "20261015T131051Z-593b0f",
+  "startedAt": "2026-10-15T13:10:51.452073Z",
+  "verdict": "NOT_FIXED",
+  "humanApprovalRequired": false,
+  "message": "No attempt produced a verified fix (3 tried).",
+  "config": {
+    "maxAttempts": 3,
+    "buildTimeoutSeconds": 300,
+    "allowedRoots": [
+      "src/main/java",
+      "src/test/java"
+    ],
+    "allowedExtensions": [
+      ".java"
+    ],
+    "protectedPaths": [
+      "src/test/java"
+    ],
+    "maxFiles": 5,
+    "maxChangedLines": 200
+  },
+  "baseline": {
+    "outcome": "FAIL",
+    "exitCode": 1,
+    "durationMillis": 3462,
+    "compileErrors": 1,
+    "testFailures": 0
+  },
+  "attempts": [
+    {
+      "number": 1,
+      "status": "DID_NOT_APPLY",
+      "durationMillis": 11905,
+      "detail": "The patch did not apply: src/main/java/bench/App.java, hunk 1: the lines this hunk expects were not found within 50 lines of line 5. First expected line: \"public class App {\"",
+      "summary": "Change the method signature to match the return type of the method being called.",
+      "assumptions": [
+        "The return type of the method `greeting` in `Greeter` is a String."
+      ],
+      "modifiesTests": false,
+      "diffChars": 235,
+      "validation": {
+        "accepted": true,
+        "violations": []
+      },
+      "apply": {
+        "applied": false,
+        "errors": [
+          "src/main/java/bench/App.java, hunk 1: the lines this hunk expects were not found within 50 lines of line 5. First expected line: \"public class App {\""
+        ],
+        "changes": []
+      }
+    },
+    {
+      "number": 2,
+      "status": "REJECTED",
+      "durationMillis": 11230,
+      "detail": "The patch was rejected: MALFORMED_DIFF: line 3: malformed hunk header: @@ -5,4 +5,4  @@",
+      "summary": "Add semicolon at the end of the method greeting()",
+      "assumptions": [
+        "The method greeting() is non-static and returns a String"
+      ],
+      "modifiesTests": false,
+      "diffChars": 243,
+      "validation": {
+        "accepted": false,
+        "violations": [
+          {
+            "code": "MALFORMED_DIFF",
+            "path": null,
+            "message": "line 3: malformed hunk header: @@ -5,4 +5,4  @@"
+          }
+        ]
+      }
+    },
+    {
+      "number": 3,
+      "status": "DID_NOT_APPLY",
+      "durationMillis": 11769,
+      "detail": "The patch did not apply: the patch would not change any file",
+      "summary": "Add semicolon at the end of the method greeting()",
+      "assumptions": [
+        "The method greeting() is a non-static method and it is being called from a static context."
+      ],
+      "modifiesTests": false,
+      "diffChars": 241,
+      "validation": {
+        "accepted": true,
+        "violations": []
+      },
+      "apply": {
+        "applied": false,
+        "errors": [
+          "the patch would not change any file"
+        ],
+        "changes": []
+      }
+    }
+  ],
+  "patchFile": null,
+  "warnings": [],
+  "note": "A passing build is evidence, not proof of correctness. The patch was never applied to your working tree. Review it before applying."
+}

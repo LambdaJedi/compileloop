@@ -508,6 +508,22 @@ The project's test suite exercises the repair pipeline and uses a fake Ollama se
 
 CI is configured for Ubuntu and Windows using JDK 17.
 
+## Benchmark Results
+
+CompileLoop was evaluated against 20 benchmark fixtures using three local Ollama models, covering syntax errors, type mismatches, symbol errors, test failures, and multi-file issues.
+
+| Model | Repairs | Repair Rate | Compile Recovery | Test Recovery | Mean Latency |
+|---|---:|---:|---:|---:|---:|
+| `qwen2.5-coder:7b` | 9/20 | 45% | 6/15 (40%) | 3/5 (60%) | 29s |
+| `qwen2.5-coder:1.5b` | 4/20 | 20% | 4/15 (27%) | 0/5 (0%) | 12s |
+| `deepseek-coder:6.7b` | 1/20 | 5% | 0/15 (0%) | 1/5 (20%) | 39s |
+
+Across 60 runs, stop conditions were triggered 27 times: 21 `NO_PROGRESS` and 6 `AI_UNAVAILABLE`. Other runs ended with a verified candidate, `NOT_FIXED`, or an infrastructure error.
+
+These results are specific to this benchmark suite and setup, not a guarantee of real-world repair performance. Regression rate was not measured.
+
+See [the benchmark documentation](benchmarks/README.md) for fixture categories, reproduction commands, and limitations.
+
 ## Roadmap
 
 ### Completed
