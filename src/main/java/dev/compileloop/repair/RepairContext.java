@@ -49,15 +49,20 @@ public record RepairContext(
         sb.append("The value of \"diff\" MUST be a complete unified diff. ")
                 .append("It MUST begin with the two header lines `--- a/<path>` and `+++ b/<path>` ")
                 .append("before any `@@` hunk. It MUST NOT begin with `@@`.\n\n");
+        // The example is deliberately unrelated to any built-in fixture: a different
+        // class, method and error class. It shows the SHAPE of a valid response and
+        // nothing more. If it echoed a fixture's fix, the demo would prove nothing.
         sb.append("Example of a well-formed response (do not copy the code, only the shape):\n");
-        sb.append("{\"summary\": \"Return a + b instead of a string.\", ")
-                .append("\"diff\": \"--- a/src/main/java/com/example/Widget.java\\n")
-                .append("+++ b/src/main/java/com/example/Widget.java\\n")
-                .append("@@ -10,3 +10,3 @@\\n")
-                .append("     public int add(int a, int b) {\\n")
-                .append("-        return \\\"x\\\";\\n")
-                .append("+        return a + b;\\n")
-                .append("     }\\n\", ")
+        sb.append("{\"summary\": \"Terminate the statement with a semicolon.\", ")
+                .append("\"diff\": \"--- a/src/main/java/example/Greeter.java\\n")
+                .append("+++ b/src/main/java/example/Greeter.java\\n")
+                .append("@@ -5,4 +5,4 @@\\n")
+                .append(" public class Greeter {\\n")
+                .append("     public String hello() {\\n")
+                .append("-        return \\\"hi\\\"\\n")
+                .append("+        return \\\"hi\\\";\\n")
+                .append("     }\\n")
+                .append(" }\\n\", ")
                 .append("\"assumptions\": []}\n\n");
 
         sb.append("## Rules\n");
@@ -66,7 +71,8 @@ public record RepairContext(
         sb.append("- In the `@@ -oldStart,oldCount +newStart,newCount @@` header, ")
                 .append("oldCount is the number of context and `-` lines in the hunk, ")
                 .append("and newCount is the number of context and `+` lines. ")
-                .append("A wrong count causes the patch to be rejected.\n");
+                .append("Try to get these right, but a miscounted header is accepted: ")
+                .append("the counts are recomputed from the body. A malformed header is still rejected.\n");
         sb.append("- Prefer the smallest correct change: fix method bodies before changing method signatures. ")
                 .append("Do not change a public method's return type or parameter list unless the diagnostic ")
                 .append("itself requires it.\n");

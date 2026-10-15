@@ -241,6 +241,24 @@ class ContextBuilderTest {
         assertTrue(text.contains("incompatible types"));
         assertTrue(text.contains("### src/main/java/fx/Broken.java"));
     }
+    @Test
+    void promptExampleIsNotTheDemoFix() {
+        // The worked example in the prompt must not be usable as-is to repair
+        // the demo fixture, or the demo proves nothing about the model's reasoning.
+        // Guards against a future contributor "helpfully" making the example match.
+        RepairContext ctx = build(ParsedBuild.empty());
+        String prompt = ctx.render();
+
+        assertFalse(prompt.contains("return \"x\""), "prompt contains the demo's broken line");
+        assertFalse(prompt.contains("return a + b"), "prompt contains the demo's fix");
+        assertFalse(prompt.contains("class Calc"), "prompt names the demo class");
+        assertFalse(prompt.contains("int add("), "prompt names the demo method");
+        assertFalse(prompt.contains("fx.Calc"), "prompt names the demo package");
+        // and it should still contain a well-formed example, just an unrelated one
+        assertTrue(prompt.contains("Greeter"), "prompt should show a worked example");
+        assertTrue(prompt.contains("--- a/"), "prompt example should show the diff header format");
+        assertTrue(prompt.contains("+++ b/"), "prompt example should show the diff header format");
+    }
 
     @Test
     void emptyDiagnosticsStillProduceAValidContext() {

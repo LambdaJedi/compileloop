@@ -126,7 +126,7 @@ class CliRepairTest {
         for (String[] args : bad) {
             outBuf.reset();
             errBuf.reset();
-            assertEquals(Cli.EXIT_USAGE, cli(result(Verdict.FIXED, null, List.of(), List.of())).run(args),
+            assertEquals(Cli.EXIT_USAGE, cli(result(Verdict.VERIFIED_CANDIDATE, null, List.of(), List.of())).run(args),
                     String.join(" ", args));
             assertTrue(err().length() > 0, String.join(" ", args));
             assertEquals(null, seenOptions.get() == null ? null : seenOptions.getAndSet(null),
@@ -136,7 +136,7 @@ class CliRepairTest {
 
     @Test
     void exitCodesFollowTheVerdict() {
-        assertEquals(Cli.EXIT_PASS, cli(result(Verdict.FIXED, null, List.of(), List.of()))
+        assertEquals(Cli.EXIT_PASS, cli(result(Verdict.VERIFIED_CANDIDATE, null, List.of(), List.of()))
                 .run(new String[]{"repair", "p", "--model", "m"}));
         assertEquals(Cli.EXIT_PASS, cli(result(Verdict.ALREADY_PASSING, null, List.of(), List.of()))
                 .run(new String[]{"repair", "p", "--model", "m"}));
@@ -151,7 +151,7 @@ class CliRepairTest {
     @Test
     void aFixIsReportedWithTheApplyCommandAndTheHonestSandboxWarning() {
         Path patch = tmp.resolve("fix.patch");
-        RepairResult r = result(Verdict.FIXED, patch,
+        RepairResult r = result(Verdict.VERIFIED_CANDIDATE, patch,
                 List.of(attempt(1, Status.VERIFIED, "return the sum", "The build passes with this patch.")),
                 List.of("This patch changes test files. Check that the tests were fixed, not weakened."));
 
@@ -160,7 +160,7 @@ class CliRepairTest {
         String o = out();
         assertTrue(o.contains("Attempt 1: VERIFIED"), o);
         assertTrue(o.contains("Model says: return the sum"), o);
-        assertTrue(o.contains("Result: FIXED"), o);
+        assertTrue(o.contains("Result: VERIFIED_CANDIDATE"), o);
         assertTrue(o.contains("git apply"), o);
         assertTrue(o.contains(patch.toString()), o);
         assertTrue(o.contains("WARNING: This patch changes test files"), o);
@@ -182,7 +182,7 @@ class CliRepairTest {
 
     @Test
     void modelWrittenTextCannotInjectTerminalControlCharacters() {
-        RepairResult r = result(Verdict.FIXED, null,
+        RepairResult r = result(Verdict.VERIFIED_CANDIDATE, null,
                 List.of(attempt(1, Status.VERIFIED, "\u001b[2J\u001b]0;pwned\u0007looks fine", "ok\u001b[31m")),
                 List.of("warn\u001b[0m"));
 
@@ -226,7 +226,7 @@ class CliRepairTest {
 
     @Test
     void helpMentionsRepairAndTheSafetyNotes() {
-        cli(result(Verdict.FIXED, null, List.of(), List.of())).run(new String[]{"--help"});
+        cli(result(Verdict.VERIFIED_CANDIDATE, null, List.of(), List.of())).run(new String[]{"--help"});
 
         assertTrue(out().contains("compileloop repair"));
         assertTrue(out().contains("--allow-test-changes"));

@@ -239,7 +239,7 @@ public final class Cli {
 
     static int repairExit(RepairResult r) {
         return switch (r.verdict()) {
-            case ALREADY_PASSING, FIXED -> EXIT_PASS;
+            case ALREADY_PASSING, VERIFIED_CANDIDATE -> EXIT_PASS;
             case NOT_FIXED -> EXIT_FAIL;
             case AI_UNAVAILABLE, INFRA_ERROR -> EXIT_INFRA;
         };

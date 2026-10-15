@@ -84,7 +84,7 @@ class RepairEndToEndTest {
         RepairResult r = new RepairEngine(new BuildRunner()::runMavenTests, ai, RepairEngine.Config.defaults())
                 .repair(project);
 
-        assertEquals(RepairResult.Verdict.FIXED, r.verdict(), r.message() + " " + r.attempts());
+        assertEquals(RepairResult.Verdict.VERIFIED_CANDIDATE, r.verdict(), r.message() + " " + r.attempts());
         assertEquals(BuildOutcome.FAIL, r.baseline().outcome());
         assertEquals(1, r.baseline().parsed().compileErrors().size());
         List<String> shown = ai.receivedContexts().get(0).files().stream().map(RepairContext.SourceFile::path).toList();
@@ -135,7 +135,7 @@ class RepairEndToEndTest {
         RepairResult r = new RepairEngine(new BuildRunner()::runMavenTests, ai,
                 RepairEngine.Config.defaults().withBuildTimeout(Duration.ofMinutes(3))).repair(project);
 
-        assertEquals(RepairResult.Verdict.FIXED, r.verdict(), r.message() + " " + r.attempts());
+        assertEquals(RepairResult.Verdict.VERIFIED_CANDIDATE, r.verdict(), r.message() + " " + r.attempts());
         assertEquals(1, r.baseline().parsed().compileErrors().size(), r.baseline().outputTail());
         assertEquals(CALC, Files.readString(project.resolve("src/main/java/fx/Calc.java")));
         assertTrue(Files.isRegularFile(r.reportDirectory().resolve("attempt-1/build.log")));

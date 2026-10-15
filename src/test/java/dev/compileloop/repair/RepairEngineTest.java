@@ -143,11 +143,20 @@ class RepairEngineTest {
 
         RepairResult r = run(ai);
 
-        assertEquals(Verdict.FIXED, r.verdict(), r.message());
+        assertEquals(Verdict.VERIFIED_CANDIDATE, r.verdict(), r.message());
         assertEquals(1, r.attempts().size());
         assertEquals(Status.VERIFIED, r.attempts().get(0).status());
         assertNotNull(r.patchFile());
-        assertEquals(GOOD_DIFF, Files.readString(r.patchFile()));
+        // fix.patch is the NORMALIZED rendering (UnifiedDiffWriter adds a
+        // `diff --git` header and recomputes hunk counts). Compare the parsed
+        // patches — records have value equality — so a cosmetic change to the
+        // writer does not fail this test while a semantic regression does.
+        String written = Files.readString(r.patchFile());
+        assertEquals(UnifiedDiff.parse(GOOD_DIFF), UnifiedDiff.parse(written),
+                "fix.patch should express the same patches as the model's diff");
+        assertTrue(written.contains("diff --git "), "normalized output keeps a git header");
+        assertTrue(written.contains("--- a/"), "normalized output keeps a --- a/ header");
+        assertTrue(written.contains("+++ b/"), "normalized output keeps a +++ b/ header");
         assertWorkingTreeUntouched();
         assertEquals(2, builds, "one baseline build and one build of the patched copy");
         assertEquals(project.toRealPath(), directoriesBuilt.get(0));
@@ -222,7 +231,7 @@ class RepairEngineTest {
 
         RepairResult r = run(ai);
 
-        assertEquals(Verdict.FIXED, r.verdict());
+        assertEquals(Verdict.VERIFIED_CANDIDATE, r.verdict());
         assertEquals(List.of(Status.REJECTED, Status.VERIFIED),
                 r.attempts().stream().map(RepairResult.AttemptRecord::status).toList());
         assertTrue(r.attempts().get(0).detail().contains("FORBIDDEN_PATH"), r.attempts().get(0).detail());
@@ -275,7 +284,7 @@ class RepairEngineTest {
 
         assertEquals(Status.DID_NOT_APPLY, r.attempts().get(0).status());
         assertTrue(r.attempts().get(0).detail().contains("did not apply"));
-        assertEquals(Verdict.FIXED, r.verdict());
+        assertEquals(Verdict.VERIFIED_CANDIDATE, r.verdict());
     }
 
     @Test
@@ -286,7 +295,7 @@ class RepairEngineTest {
 
         assertEquals(Status.AI_ERROR, r.attempts().get(0).status());
         assertEquals(AIProviderException.Kind.MALFORMED_RESPONSE, r.attempts().get(0).aiErrorKind());
-        assertEquals(Verdict.FIXED, r.verdict());
+        assertEquals(Verdict.VERIFIED_CANDIDATE, r.verdict());
     }
 
     @Test
@@ -356,7 +365,7 @@ class RepairEngineTest {
 
         RepairResult r = run(ai, RepairEngine.Config.defaults().allowingTestChanges());
 
-        assertEquals(Verdict.FIXED, r.verdict());
+        assertEquals(Verdict.VERIFIED_CANDIDATE, r.verdict());
         assertTrue(r.attempts().get(0).modifiesTests());
         assertTrue(r.warnings().stream().anyMatch(w -> w.contains("changes test files")), r.warnings().toString());
     }
@@ -401,7 +410,8 @@ class RepairEngineTest {
 
         Object root = Json.parse(Files.readString(r.reportDirectory().resolve("repair.json")), 20);
         Map<?, ?> m = (Map<?, ?>) root;
-        assertEquals("FIXED", m.get("verdict"));
+        assertEquals("VERIFIED_CANDIDATE", m.get("verdict"));
+        assertEquals(Boolean.TRUE, m.get("humanApprovalRequired"));
         assertEquals(1L, ((Number) m.get("schemaVersion")).longValue());
         List<?> attempts = (List<?>) m.get("attempts");
         assertEquals(2, attempts.size());

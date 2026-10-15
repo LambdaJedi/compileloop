@@ -148,8 +148,12 @@ public final class RepairEngine {
             if (a.status() == Status.VERIFIED) {
                 fix = dir.resolve("fix.patch");
                 try {
-                    Files.writeString(fix, a.diff().endsWith("\n") ? a.diff() : a.diff() + "\n", StandardCharsets.UTF_8);
-                } catch (IOException e) {
+                    // Write a NORMALIZED patch: canonical headers with the counts
+                    // the parser recomputed from the body. The model's raw diff is
+                    // preserved separately in attempt-N/proposal.diff for audit.
+                    String normalized = UnifiedDiffWriter.write(a.validation().files());
+                    Files.writeString(fix, normalized, StandardCharsets.UTF_8);
+                } catch (IOException | RuntimeException e) {
                     warnings.add("The fix was verified but fix.patch could not be written: " + e.getMessage());
                     fix = null;
                 }
@@ -167,9 +171,10 @@ public final class RepairEngine {
 
         AttemptRecord last = attempts.get(attempts.size() - 1);
         if (last.status() == Status.VERIFIED) {
-            return finish(Verdict.FIXED, runId, dir, baseline, attempts, fix, warnings,
+            return finish(Verdict.VERIFIED_CANDIDATE, runId, dir, baseline, attempts, fix, warnings,
                     "Attempt " + last.number() + " produced a patch whose build passes in a disposable copy. "
-                            + "Your working tree is unchanged.", started);
+                            + "Your working tree is unchanged; review fix.patch and apply it yourself.",
+                    started);
         }
         boolean allAiDown = attempts.stream().allMatch(x -> x.status() == Status.AI_ERROR
                 && (x.aiErrorKind() == AIProviderException.Kind.UNAVAILABLE

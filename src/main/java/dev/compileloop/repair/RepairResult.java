@@ -20,8 +20,12 @@ public record RepairResult(
     public enum Verdict {
         /** The build already passed; nothing to repair. */
         ALREADY_PASSING,
-        /** A proposal was validated, applied in a copy, and the copy's build passed. */
-        FIXED,
+        /**
+         * A proposal was validated, applied in a disposable copy, and the copy's
+         * build passed. The candidate patch is still a proposal: it has not been
+         * applied to the user's working tree and requires human review.
+         */
+        VERIFIED_CANDIDATE,
         /** Attempts were used up without a verified fix. */
         NOT_FIXED,
         /** The model could not be reached or could not take the context. */
@@ -61,7 +65,12 @@ public record RepairResult(
         warnings = List.copyOf(warnings);
     }
 
-    public boolean fixed() {
-        return verdict == Verdict.FIXED;
+    /**
+     * True when a candidate patch was verified by a build in a disposable copy.
+     * It does NOT mean the patch has been applied or approved: the caller (a
+     * human, ideally) must still review and apply it.
+     */
+    public boolean verifiedCandidate() {
+        return verdict == Verdict.VERIFIED_CANDIDATE;
     }
 }

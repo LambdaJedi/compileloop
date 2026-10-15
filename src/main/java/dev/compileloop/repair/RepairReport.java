@@ -24,6 +24,7 @@ final class RepairReport {
         m.put("runId", r.runId());
         m.put("startedAt", startedAt.toString());
         m.put("verdict", r.verdict());
+        m.put("humanApprovalRequired", r.verdict() == RepairResult.Verdict.VERIFIED_CANDIDATE);
         m.put("message", r.message());
         m.put("config", config);
         m.put("baseline", r.baseline() == null ? null : buildJson(r.baseline()));
