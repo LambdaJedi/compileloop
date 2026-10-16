@@ -15,6 +15,7 @@ CompileLoop is designed around human review, reproducible results, and a complet
 - [Features](#features)
 - [How It Works](#how-it-works)
 - [Quick Start](#quick-start)
+- [Providers](#providers)
 - [Example Output](#example-output)
 - [Project Examples](#project-examples)
 - [Commands](#commands)
@@ -26,20 +27,24 @@ CompileLoop is designed around human review, reproducible results, and a complet
 - [Known Limitations](#known-limitations)
 - [Development](#development)
 - [Roadmap](#roadmap)
+- [Design Principle](#design-principle)
 - [License](#license)
 
 ## Features
 
 - **Local AI inference:** Uses [Ollama](https://ollama.com/) to run code models locally without requiring paid AI APIs.
+- **OpenAI-compatible endpoints:** Any endpoint that speaks the OpenAI chat completions shape works as a provider, including self-hosted aggregators such as FreeLLMAPI.
 - **Automated build diagnostics:** Runs Maven tests and extracts compilation errors, test failures, and other build information.
-- **AI-assisted repair:** Supplies bounded diagnostic context to a local model and requests a unified-diff patch.
+- **AI-assisted repair:** Supplies bounded diagnostic context to a model and requests a unified-diff patch.
 - **Strict patch validation:** Rejects changes that violate file, path, extension, size, or other policy restrictions.
 - **Disposable workspaces:** Tests proposed patches in a temporary project copy rather than modifying the original working tree.
+- **Docker-based build executor:** An optional executor runs the verification build inside a container with memory and CPU limits, so the caller's directory is never the mount.
 - **Verified candidate patches:** Produces a Git-compatible patch when the modified project passes the verification build.
 - **Auditability:** Preserves model responses, validation results, build logs, reports, and repair attempts.
 - **Offline testing support:** Includes a mock AI provider and replayable model responses for testing without a running model.
 - **Cross-platform support:** Tested on Windows and Linux, with CI configured for both.
 - **Java-first architecture:** Built around small components with clear responsibilities and an extensible AI provider interface.
+- **Library API:** The repair loop is callable from Java, not just from the CLI.
 
 ## How It Works
 
@@ -132,6 +137,43 @@ git apply "path/to/fix.patch"
 
 Replace the example path with the actual path printed by CompileLoop.
 
+## Providers
+
+CompileLoop supports two kinds of AI provider. Both are configured entirely through command-line flags; no code changes are required to switch between them.
+
+### Ollama (default)
+
+Local inference with no API key and no network access beyond localhost. This is the default and the recommended path for individual use.
+
+```bash
+java -jar target/compileloop-0.1.0-SNAPSHOT.jar repair \
+  examples/broken-compilation-project \
+  --model qwen2.5-coder:7b
+```
+
+The `--ollama-url` flag changes the endpoint. The default is `http://localhost:11434`.
+
+### OpenAI-compatible endpoints
+
+Any endpoint that exposes the OpenAI `/v1/chat/completions` shape works as a provider. This includes hosted services, self-hosted gateways, and aggregators such as [FreeLLMAPI](https://github.com/tashfeenahmed/freellmapi), which combines many free-tier providers behind one API.
+
+```bash
+java -jar target/compileloop-0.1.0-SNAPSHOT.jar repair \
+  examples/broken-compilation-project \
+  --provider openai \
+  --openai-base-url http://localhost:3001/v1 \
+  --api-key-env FREELLMAPI_KEY \
+  --model gpt-4o-mini
+```
+
+The `--api-key-env` flag reads the key from an environment variable, which keeps it out of the process list and shell history. The `--api-key` flag is also supported for scripts where the environment is not controlled; it is visible to `ps` and should be treated as less safe.
+
+The `--openai-base-url` should point at the API root — for example `http://localhost:3001/v1` — and `/chat/completions` is appended internally. The API key is never written to an error message, a log line, or the audit trail. That invariant has a dedicated test.
+
+When `provider=openai` is set, `--openai-base-url` and one of `--api-key` / `--api-key-env` are required. The two key flags are mutually exclusive. `--response-file` still works as a way to replay a saved answer without touching a model.
+
+Both providers pass through the same strict `ProposalParser`, so a response that isn't exactly one JSON object with the expected fields is rejected the same way regardless of who produced it.
+
 ## Example Output
 
 A repair run can produce output similar to the following:
@@ -209,9 +251,13 @@ java -jar target/compileloop-0.1.0-SNAPSHOT.jar test path/to/project
 
 | Option | Description |
 |---|---|
-| `--model <name>` | Ollama model to use |
-| `--response-file <file>` | Use a saved model response instead |
+| `--provider <name>` | `ollama` (default) or `openai` |
+| `--model <name>` | Model name (required unless `--response-file`) |
 | `--ollama-url <url>` | Ollama endpoint; defaults to `http://localhost:11434` |
+| `--openai-base-url <url>` | Base URL of an OpenAI-compatible endpoint (`provider=openai`) |
+| `--api-key <key>` | API key (`provider=openai`; visible in the process list) |
+| `--api-key-env <VAR>` | Read the API key from an environment variable (safer) |
+| `--response-file <file>` | Use a saved model response instead |
 | `--attempts <n>` | Maximum repair attempts; defaults to 3, with a hard cap of 10 |
 | `--timeout <seconds>` | Build timeout per run; defaults to 300 seconds |
 | `--ai-timeout <seconds>` | Model request timeout per attempt; defaults to 300 seconds |
@@ -220,7 +266,7 @@ java -jar target/compileloop-0.1.0-SNAPSHOT.jar test path/to/project
 
 ### Exit codes
 
-**`test` command**
+#### `test` command
 
 | Exit code | Meaning |
 |---|---|
@@ -230,7 +276,7 @@ java -jar target/compileloop-0.1.0-SNAPSHOT.jar test path/to/project
 | `3` | Build could not be started |
 | `64` | Invalid command usage |
 
-**`repair` command**
+#### `repair` command
 
 | Exit code | Meaning |
 |---|---|
@@ -262,22 +308,27 @@ flowchart TD
 
 ### Core components
 
-- **`BuildRunner`** — Launches Maven using an argument list, captures output, enforces timeouts, and terminates the process tree when required.
-- **`BuildOutputParser`** — Converts Maven console output into structured compilation errors and test failures. Unrecognised error lines are retained separately.
-- **`ContextBuilder`** — Selects bounded diagnostic and source context from permitted source roots.
-- **`AIProvider`** — Defines the interface for AI backends. CompileLoop includes `OllamaProvider` and `MockProvider`.
-- **`ProposalParser`** — Accepts a strictly structured model response containing a summary, a diff, and optional assumptions.
-- **`UnifiedDiff`** — Parses unified diffs without directly modifying project files.
-- **`PatchPolicy`** — Defines allowed roots, extensions, protected paths, and change-size limits.
-- **`PatchValidator`** — Rejects patches that violate the configured policy.
-- **`PatchApplier`** — Applies validated patches using strict matching and all-or-nothing semantics.
-- **`Workspace`** — Creates a disposable project copy for verification.
-- **`RepairEngine`** — Coordinates repair attempts, verification, result recording, and early stopping conditions.
-- **`ReportWriter`** — Produces structured JSON and human-readable build reports.
+- **BuildRunner** — Launches Maven using an argument list, captures output, enforces timeouts, and terminates the process tree when required.
+- **DockerBuildExecutor** — An alternative `BuildExecutor` that runs the build inside a Docker container with memory and CPU limits.
+- **BuildOutputParser** — Converts Maven console output into structured compilation errors and test failures. Unrecognised error lines are retained separately.
+- **ContextBuilder** — Selects bounded diagnostic and source context from permitted source roots.
+- **AIProvider** — Defines the interface for AI backends. CompileLoop includes `OllamaProvider`, `OpenAICompatibleProvider`, and `MockProvider`.
+- **ProposalParser** — Accepts a strictly structured model response containing a summary, a diff, and optional assumptions.
+- **UnifiedDiff** — Parses unified diffs without directly modifying project files.
+- **UnifiedDiffWriter** — Renders parsed patches back to canonical, Git-applicable text.
+- **PatchPolicy** — Defines allowed roots, extensions, protected paths, and change-size limits.
+- **PatchValidator** — Rejects patches that violate the configured policy.
+- **PatchApplier** — Applies validated patches using strict matching and all-or-nothing semantics.
+- **Workspace** — Creates a disposable project copy for verification.
+- **RepairEngine** — Coordinates repair attempts, verification, result recording, and early stopping conditions.
+- **ReportWriter** — Produces structured JSON and human-readable build reports.
+- **CompileLoop** — The library-facing facade. A single builder for callers who do not go through the CLI.
 
 ### Extensibility
 
 The `AIProvider` interface separates the repair engine from the underlying model. A new provider can be implemented without replacing the build, validation, or reporting pipeline.
+
+The `RepairEngine.BuildExecutor` interface separates the repair loop from how the build runs. The default runs Maven on the host; `DockerBuildExecutor` runs it inside a container. A caller can supply their own executor through the library API without touching the engine.
 
 The included mock provider also allows the repair engine to be tested without depending on a live Ollama service.
 
@@ -336,13 +387,19 @@ CompileLoop does not automatically apply a successful candidate to your original
 
 The repair loop can stop early when it encounters repeated identical patches or consecutive attempts that produce the same diagnostic signature.
 
-This prevents the engine from wasting its entire attempt budget repeating an unchanged, unsuccessful proposal.
+This prevents CompileLoop from wasting its entire attempt budget repeating an unchanged, unsuccessful proposal.
+
+### API keys
+
+When `provider=openai` is used, the API key is never written to a log line, an error message, or the audit trail. `--api-key-env` reads the key from an environment variable at construction time. There is a dedicated test asserting that the key cannot leak into any error message the provider produces.
 
 ### Important security warning
 
 **CompileLoop is not a security sandbox.**
 
 Although verification takes place in a disposable project copy, Maven still executes project code and the patched code with the current user's permissions.
+
+The `DockerBuildExecutor` runs the build inside a container with memory and CPU limits, and binds only a temporary copy of the project — never the caller's directory. This provides fault isolation and separation from the host process tree. It is not a substitute for a hardened sandbox against a determined attacker.
 
 Do not run CompileLoop against untrusted repositories unless you are prepared to execute their build logic in your environment.
 
@@ -385,18 +442,13 @@ for (var failure : result.parsed().testFailures()) {
 
 ### Run the repair engine
 
-```java
-RepairEngine engine = new RepairEngine(
-        new BuildRunner()::runMavenTests,
-        AIProvider.ollama(
-                "http://localhost:11434",
-                "qwen2.5-coder:7b"
-        ),
-        RepairEngine.Config.defaults()
-);
+The simplest entry point is the `CompileLoop` facade. Every field has a default except the project directory and the provider, so the minimal call is two lines.
 
-RepairResult result =
-        engine.repair(Path.of("path/to/maven/project"));
+```java
+RepairResult result = CompileLoop.repair()
+        .project(Path.of("path/to/maven/project"))
+        .provider(AIProvider.ollama("http://localhost:11434", "qwen2.5-coder:7b"))
+        .run();
 
 if (result.verifiedCandidate()) {
     Path patch = result.patchFile();
@@ -405,13 +457,43 @@ if (result.verifiedCandidate()) {
 }
 ```
 
+A more configured call, showing the pluggable build executor:
+
+```java
+RepairResult result = CompileLoop.repair()
+        .project(Path.of("path/to/maven/project"))
+        .provider(AIProvider.openAiCompatible(
+                "http://localhost:3001/v1",
+                System.getenv("FREELLMAPI_KEY"),
+                "gpt-4o-mini"))
+        .executor(new DockerBuildExecutor())
+        .maxAttempts(5)
+        .buildTimeout(Duration.ofMinutes(5))
+        .allowTestChanges(false)
+        .run();
+```
+
+The builder collects the same `RepairEngine.Config` the CLI uses and delegates to `RepairEngine.repair`. It adds no behaviour of its own.
+
+### Implement a custom provider
+
+The `AIProvider` interface is a single method. A new backend implements it and nothing else:
+
+```java
+public final class MyProvider implements AIProvider {
+    @Override
+    public PatchProposal proposeRepair(RepairContext context) throws AIProviderException {
+        // Send context.render() somewhere, parse the reply with ProposalParser,
+        // return a PatchProposal. Never write to the project filesystem.
+    }
+}
+```
+
 These examples illustrate the intended API. Adapt imports and package names to the version you are using.
 
 ## Benchmark
 
-Twenty tiny Maven fixtures, each with exactly one deliberate defect, run
-against three local code models. All fixtures and the runner live under
-`benchmarks/`.
+Twenty tiny Maven fixtures, each with exactly one deliberate defect, run against three local code models. All fixtures and the runner live under `benchmarks/`.
 
 | Model | Repair rate | Compile recovery | Test recovery | Mean latency |
 |---|---|---|---|---|
@@ -419,23 +501,11 @@ against three local code models. All fixtures and the runner live under
 | `qwen2.5-coder:1.5b` | 4/20 (20%) | 4/15 (27%) | 0/5 (0%) | 12s |
 | `deepseek-coder:6.7b` | 1/20 (5%) | 0/15 (0%) | 1/5 (20%) | 39s |
 
-Out of 60 runs, the loop's stop conditions fired 27 times: 21 as
-`NO_PROGRESS` (identical patch or unchanged diagnostics) and 6 as
-`AI_UNAVAILABLE`. The remaining runs either verified a candidate, exhausted
-the attempt budget (`NOT_FIXED`), or hit an infrastructure error.
+Out of 60 runs, the loop's stop conditions fired 27 times: 21 as `NO_PROGRESS` (identical patch or unchanged diagnostics) and 6 as `AI_UNAVAILABLE`. The remaining runs either verified a candidate, exhausted the attempt budget (`NOT_FIXED`), or hit an infrastructure error.
 
-**Note on `deepseek-coder:6.7b`.** The model identifies the correct fix in
-its summary but produces unified diffs whose context lines do not match the
-source file, so `PatchApplier` rejects them as `DID_NOT_APPLY`. This is a
-known behaviour of completion-oriented code models: they generate
-plausible-looking diffs by pattern rather than by copying the exact source
-lines. Its low score reflects that mismatch, not an inability to diagnose
-the bug.
+**Note on `deepseek-coder:6.7b`.** The model identifies the correct fix in its summary but produces unified diffs whose context lines do not match the source file, so `PatchApplier` rejects them as `DID_NOT_APPLY`. This is a known behaviour of completion-oriented code models: they generate plausible-looking diffs by pattern rather than by copying the exact source lines. Its low score reflects that mismatch, not an inability to diagnose the bug.
 
 Methodology and per-fixture results: [`benchmarks/README.md`](benchmarks/README.md).
-Reproduce with `benchmarks/run.sh`.
-
-See [`benchmarks/README.md`](benchmarks/README.md) for the methodology and per-fixture results.
 
 To run the benchmark:
 
@@ -449,12 +519,14 @@ bash benchmarks/run.sh
 compileloop/
 ├── src/
 │   ├── main/java/dev/compileloop/
+│   │   ├── CompileLoop.java
 │   │   ├── cli/
 │   │   │   ├── Main.java
 │   │   │   ├── Cli.java
 │   │   │   └── RepairOptions.java
 │   │   ├── build/
 │   │   │   ├── BuildRunner.java
+│   │   │   ├── DockerBuildExecutor.java
 │   │   │   ├── BuildResult.java
 │   │   │   ├── BuildOutcome.java
 │   │   │   ├── BuildOutputParser.java
@@ -467,6 +539,9 @@ compileloop/
 │   │       ├── RepairResult.java
 │   │       ├── RepairReport.java
 │   │       ├── AIProvider.java
+│   │       ├── OllamaProvider.java
+│   │       ├── OpenAICompatibleProvider.java
+│   │       ├── MockProvider.java
 │   │       ├── RepairContext.java
 │   │       ├── ContextBuilder.java
 │   │       ├── ProposalParser.java
@@ -475,13 +550,14 @@ compileloop/
 │   │       ├── PatchPolicy.java
 │   │       ├── PatchValidator.java
 │   │       ├── PatchApplier.java
-│   │       ├── Workspace.java
-│   │       ├── MockProvider.java
-│   │       └── OllamaProvider.java
+│   │       └── Workspace.java
 │   └── test/
 │       └── resources/maven/
 ├── benchmarks/
-│   └── fixtures/
+│   ├── fixtures/
+│   ├── results/
+│   ├── README.md
+│   └── run.sh
 ├── examples/
 │   ├── passing-java-project/
 │   ├── broken-compilation-project/
@@ -499,10 +575,11 @@ The repository also contains CI configuration, benchmark tooling, test fixtures,
 CompileLoop is an experimental code repair engine, and several limitations remain:
 
 - **Model reliability:** A model may misdescribe what its patch actually changes. Always inspect the diff instead of relying on the model's summary.
-- **Limited isolation:** A disposable workspace protects the original source files from direct patch application, but it does not isolate code execution from the host system.
+- **Limited isolation:** A disposable workspace protects the original source files from direct patch application, but it does not isolate code execution from the host system. The Docker executor provides fault isolation with resource limits, not a hardened sandbox against a determined attacker.
 - **Regression detection:** A candidate may pass the target build while breaking behaviour that was previously working. Regression detection is a planned improvement.
 - **Build-tool scope:** The current implementation targets Maven projects and Java source files.
 - **Verification scope:** A passing build only verifies the checks that actually ran. It does not establish correctness, security, or production readiness.
+- **Provider variability:** Different OpenAI-compatible endpoints may or may not support JSON mode. The provider defaults to requesting it; if a specific endpoint rejects the request, the `OpenAICompatibleProvider` can be constructed with JSON mode disabled. The CLI currently uses the default.
 
 More details are available in [`docs/known-limitations.md`](docs/known-limitations.md).
 
@@ -520,11 +597,11 @@ Build the runnable JAR:
 mvn -B -DskipTests package
 ```
 
-The project's test suite exercises the repair pipeline and uses a fake Ollama server where appropriate, allowing CI tests to run without downloading a model.
+The project's test suite exercises the repair pipeline and uses a fake Ollama server, a local HTTP server for the OpenAI-compatible provider, and scripted provider responses, so CI tests run without downloading a model.
+
+The Docker executor tests are guarded by `DockerBuildExecutor.isAvailable()`, which returns true only when the Docker CLI runs and the daemon's `OSType` is `linux`. On a Windows-containers daemon — including GitHub's `windows-latest` runner — those tests skip rather than fail.
 
 CI is configured for Ubuntu and Windows using JDK 17.
-
-
 
 ## Roadmap
 
@@ -533,8 +610,11 @@ CI is configured for Ubuntu and Windows using JDK 17.
 - Maven build execution and diagnostic capture
 - Structured build reports
 - Local-model integration through Ollama
+- OpenAI-compatible provider integration (hosted and self-hosted endpoints)
 - Strict proposal parsing and patch validation
 - Candidate patch application in a disposable workspace
+- Docker-based build executor with resource limits
+- Library API for embedding the repair loop
 - Verification builds
 - Repair attempt history and audit artifacts
 - Automated tests for the repair pipeline
@@ -542,8 +622,8 @@ CI is configured for Ubuntu and Windows using JDK 17.
 ### Next
 
 - Regression detection to identify candidates that break previously passing tests
-- Stronger execution isolation through a container-based workspace
-- Completed benchmark runs with published measurements
+- A container-based workspace as a fully isolated sandbox (beyond the current executor, which uses a Docker image but keeps the project on the host)
+- Cached Docker image and build volume to speed up repeat CI runs
 
 ### Longer term
 
