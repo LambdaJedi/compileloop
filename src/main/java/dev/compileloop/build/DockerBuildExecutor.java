@@ -101,17 +101,29 @@ public final class DockerBuildExecutor implements RepairEngine.BuildExecutor {
         }
     }
 
-    /** True if the docker CLI runs and the daemon answers. Best-effort. */
+    /**
+     * True if the docker CLI runs, the daemon answers, and the daemon's
+     * {@code OSType} is {@code linux}.
+     *
+     * <p>The OSType check is not cosmetic. Docker Desktop on Windows can run
+     * in either Linux-containers mode or Windows-containers mode, and both
+     * answer {@code docker info} successfully. Only Linux-containers mode can
+     * run {@code maven:3.9-eclipse-temurin-17}, which is a Linux-only image.
+     * GitHub's {@code windows-latest} runner runs in Windows-containers mode,
+     * so this method returns false there and the executor's tests skip rather
+     * than failing on a pull error.
+     */
     public static boolean isAvailable() {
         try {
-            Process p = new ProcessBuilder("docker", "info")
+            Process p = new ProcessBuilder("docker", "info", "--format", "{{.OSType}}")
                     .redirectErrorStream(true)
                     .start();
+            String out;
             try (var in = p.getInputStream()) {
-                in.readAllBytes();
+                out = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).trim();
             }
-            boolean done = p.waitFor(10, TimeUnit.SECONDS);
-            return done && p.exitValue() == 0;
+            boolean done = p.waitFor(30, TimeUnit.SECONDS);
+            return done && p.exitValue() == 0 && out.equals("linux");
         } catch (IOException e) {
             return false;
         } catch (InterruptedException e) {
