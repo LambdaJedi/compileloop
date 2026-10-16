@@ -29,4 +29,26 @@ public interface AIProvider {
     static AIProvider ollama(String baseUrl, String model, Duration timeout, int maxContextChars) {
         return new OllamaProvider(baseUrl, model, timeout, maxContextChars);
     }
+
+    /**
+     * A provider for any OpenAI-compatible chat completions endpoint — including
+     * aggregators such as FreeLLMAPI. The base URL is the API root that ends in
+     * {@code /v1} (or any equivalent); {@code /chat/completions} is appended.
+     * Pass an empty string for {@code apiKey} when the endpoint does not
+     * require one.
+     *
+     * <p>Defaults: five-minute request timeout, 200,000-character context
+     * limit, JSON mode on. For a different budget or to disable JSON mode,
+     * use the five-argument overload or construct
+     * {@link OpenAICompatibleProvider} directly.
+     */
+    static AIProvider openAiCompatible(String baseUrl, String apiKey, String model) {
+        return new OpenAICompatibleProvider(baseUrl, apiKey, model, Duration.ofMinutes(5), 200_000);
+    }
+
+    /** As {@link #openAiCompatible(String, String, String)}, with explicit timeout and context limit. */
+    static AIProvider openAiCompatible(String baseUrl, String apiKey, String model,
+                                       Duration timeout, int maxContextChars) {
+        return new OpenAICompatibleProvider(baseUrl, apiKey, model, timeout, maxContextChars);
+    }
 }
