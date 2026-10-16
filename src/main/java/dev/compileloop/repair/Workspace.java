@@ -108,8 +108,15 @@ public final class Workspace implements AutoCloseable {
         }
     }
 
-    /** Deletes a directory tree without ever following a link. Best effort. */
-    static void deleteTree(Path dir) {
+    /**
+     * Deletes a directory tree without ever following a link. Best effort.
+     *
+     * <p>Public because other components (for example the Docker build
+     * executor) also create temporary directories that need the same
+     * link-safe cleanup. It takes only a path, holds no state, and does
+     * nothing if the path does not exist.
+     */
+    public static void deleteTree(Path dir) {
         if (!Files.exists(dir, LinkOption.NOFOLLOW_LINKS)) {
             return;
         }
