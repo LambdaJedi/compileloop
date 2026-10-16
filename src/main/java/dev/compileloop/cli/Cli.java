@@ -76,6 +76,9 @@ public final class Cli {
         if (command.equals("repair")) {
             return runRepair(args);
         }
+        if (command.equals("report")) {
+            return runReport(args);
+        }
         if (!command.equals("test")) {
             err.println("Unknown command: " + command);
             err.println();
@@ -130,7 +133,6 @@ public final class Cli {
         return json ? reportJson(result) : report(result, timeoutSeconds);
     }
 
-
     // ---- repair -----------------------------------------------------------
 
     private int runRepair(String[] args) {
@@ -139,20 +141,27 @@ public final class Cli {
             return EXIT_USAGE;
         }
         Path project = null;
+        String provider = RepairOptions.DEFAULT_PROVIDER;
         String model = null;
-        String url = RepairOptions.DEFAULT_OLLAMA_URL;
+        String ollamaUrl = RepairOptions.DEFAULT_OLLAMA_URL;
+        String openAiBaseUrl = null;
+        String apiKey = null;
+        String apiKeyEnv = null;
         Path responseFile = null;
         int attempts = RepairOptions.DEFAULT_ATTEMPTS;
         int buildTimeout = RepairOptions.DEFAULT_BUILD_TIMEOUT_SECONDS;
         int aiTimeout = RepairOptions.DEFAULT_AI_TIMEOUT_SECONDS;
         boolean allowTests = false;
         boolean json = false;
+
         for (int i = 1; i < args.length; i++) {
             String a = args[i];
             String name = a.contains("=") && a.startsWith("--") ? a.substring(0, a.indexOf('=')) : a;
             String inline = a.contains("=") && a.startsWith("--") ? a.substring(a.indexOf('=') + 1) : null;
             switch (name) {
-                case "--model", "--ollama-url", "--response-file", "--attempts", "--timeout", "--ai-timeout" -> {
+                case "--provider", "--model", "--ollama-url", "--openai-base-url",
+                     "--api-key", "--api-key-env",
+                     "--response-file", "--attempts", "--timeout", "--ai-timeout" -> {
                     String value;
                     if (inline != null) {
                         value = inline;
@@ -162,8 +171,12 @@ public final class Cli {
                         return usageError(name + " needs a value.");
                     }
                     switch (name) {
+                        case "--provider" -> provider = value;
                         case "--model" -> model = value;
-                        case "--ollama-url" -> url = value;
+                        case "--ollama-url" -> ollamaUrl = value;
+                        case "--openai-base-url" -> openAiBaseUrl = value;
+                        case "--api-key" -> apiKey = value;
+                        case "--api-key-env" -> apiKeyEnv = value;
                         case "--response-file" -> responseFile = Path.of(value);
                         default -> {
                             int n;
@@ -201,20 +214,44 @@ public final class Cli {
                 }
             }
         }
+
         if (project == null) {
             return usageError("Missing project directory.");
         }
-        if (model == null && responseFile == null) {
-            return usageError("Give a model with --model <name> (served by a local Ollama), "
-                    + "or a canned answer with --response-file <file>.");
+        if (!provider.equals(RepairOptions.PROVIDER_OLLAMA)
+                && !provider.equals(RepairOptions.PROVIDER_OPENAI)) {
+            return usageError("--provider must be '" + RepairOptions.PROVIDER_OLLAMA
+                    + "' or '" + RepairOptions.PROVIDER_OPENAI + "', got: " + provider);
         }
-        if (model != null && responseFile != null) {
-            return usageError("Use either --model or --response-file, not both.");
+        if (apiKey != null && apiKeyEnv != null) {
+            return usageError("Use either --api-key or --api-key-env, not both.");
+        }
+
+        if (responseFile != null) {
+            // The response file bypasses the provider entirely. Model, URL and
+            // key flags are ignored; nothing else is required.
+        } else if (provider.equals(RepairOptions.PROVIDER_OLLAMA)) {
+            if (model == null) {
+                return usageError("--model <name> is required for provider=ollama "
+                        + "(or use --response-file for offline replay).");
+            }
+        } else {
+            if (model == null) {
+                return usageError("--model <name> is required for provider=openai.");
+            }
+            if (openAiBaseUrl == null) {
+                return usageError("--openai-base-url <url> is required for provider=openai.");
+            }
+            if (apiKey == null && apiKeyEnv == null) {
+                return usageError("provider=openai needs an API key: pass --api-key <key> "
+                        + "or --api-key-env <VAR>.");
+            }
         }
 
         RepairResult r;
         try {
-            r = repairAction.run(project, new RepairOptions(model, url, responseFile, attempts,
+            r = repairAction.run(project, new RepairOptions(provider, model, ollamaUrl,
+                    openAiBaseUrl, apiKey, apiKeyEnv, responseFile, attempts,
                     buildTimeout, aiTimeout, allowTests));
         } catch (IOException | RuntimeException e) {
             err.println("Could not run the repair: " + e.getMessage());
@@ -281,6 +318,39 @@ public final class Cli {
         return repairExit(r);
     }
 
+    // ---- report -----------------------------------------------------------
+
+    private int runReport(String[] args) {
+        if (args.length < 2) {
+            return usageError("Missing run directory.");
+        }
+        if (args.length > 2) {
+            return usageError("Unexpected extra argument: " + args[2]);
+        }
+        Path dir = Path.of(args[1]);
+        if (!Files.isDirectory(dir)) {
+            return usageError("Not a directory: " + dir);
+        }
+        Path text = dir.resolve(ReportWriter.TEXT_FILE_NAME);
+        Path json = dir.resolve(ReportWriter.FILE_NAME);
+        try {
+            if (Files.isRegularFile(text)) {
+                out.print(Files.readString(text));
+                return EXIT_PASS;
+            }
+            if (Files.isRegularFile(json)) {
+                out.print(Files.readString(json));
+                return EXIT_PASS;
+            }
+        } catch (IOException e) {
+            err.println("Could not read report: " + e.getMessage());
+            return EXIT_INFRA;
+        }
+        err.println("No report found in " + dir
+                + " (looked for " + ReportWriter.TEXT_FILE_NAME + " and " + ReportWriter.FILE_NAME + ").");
+        return EXIT_INFRA;
+    }
+
     /** Model-written or log-derived text is untrusted: strip terminal control characters. */
     static String clean(String s) {
         if (s == null) {
@@ -298,7 +368,7 @@ public final class Cli {
         return sb.toString();
     }
 
-    // ---- reporting --------------------------------------------------------
+    // ---- test reporting ---------------------------------------------------
 
     private int reportJson(BuildResult r) {
         out.println(ReportWriter.toJson(r));
@@ -332,7 +402,6 @@ public final class Cli {
                 return EXIT_TIMEOUT;
             }
             default -> {
-                // START_ERROR, INFRA_ERROR, CANCELLED: not the project's fault.
                 out.println("Result: " + r.outcome() + ". The build could not be run or completed; "
                         + "this says nothing about the project's code.");
                 String detail = r.outputTail() == null ? "" : r.outputTail().strip();
@@ -431,30 +500,41 @@ public final class Cli {
         to.println();
         to.println("Usage:");
         to.println("  compileloop test <project-dir> [--timeout <seconds>] [--json]");
-        to.println("  compileloop repair <project-dir> --model <name> [options]");
+        to.println("  compileloop repair <project-dir> [options]");
+        to.println("  compileloop report <run-dir>");
         to.println("  compileloop --help");
         to.println();
-        to.println("Options:");
-        to.println("  --timeout <seconds>   stop the build after this long (default " + DEFAULT_TIMEOUT_SECONDS + ")");
+        to.println("Options for 'test':");
+        to.println("  --timeout <seconds>   stop the build after this long (default "
+                + DEFAULT_TIMEOUT_SECONDS + ")");
         to.println("  --json                print the JSON report to stdout instead of the text summary");
         to.println();
-        to.println("Repair options (propose a patch with a local model, verify it in a copy):");
-        to.println("  --model <name>          model served by a local Ollama, e.g. qwen2.5-coder");
-        to.println("  --ollama-url <url>      Ollama address (default " + RepairOptions.DEFAULT_OLLAMA_URL + ")");
-        to.println("  --response-file <file>  use a canned model answer instead of a model (for trying it offline)");
-        to.println("  --attempts <n>          proposals to try, 1-10 (default " + RepairOptions.DEFAULT_ATTEMPTS + ")");
-        to.println("  --timeout <seconds>     per build (default " + RepairOptions.DEFAULT_BUILD_TIMEOUT_SECONDS + ")");
-        to.println("  --ai-timeout <seconds>  per model answer (default " + RepairOptions.DEFAULT_AI_TIMEOUT_SECONDS + ")");
-        to.println("  --allow-test-changes    let a patch edit src/test/java (off by default)");
-        to.println("  --json                  print the JSON report");
-        to.println("  The patch is only written to target/compileloop/repairs/<run>/fix.patch.");
-        to.println("  The build of the patched copy runs the patched code with your permissions.");
+        to.println("Options for 'repair':");
+        to.println("  --provider <name>        ollama (default) or openai");
+        to.println("  --model <name>           model name (required unless --response-file)");
+        to.println("  --ollama-url <url>       Ollama endpoint (default "
+                + RepairOptions.DEFAULT_OLLAMA_URL + ")");
+        to.println("  --openai-base-url <url>  base URL of an OpenAI-compatible endpoint (provider=openai)");
+        to.println("  --api-key <key>          API key (provider=openai; visible in the process list)");
+        to.println("  --api-key-env <VAR>      read the API key from an environment variable (safer)");
+        to.println("  --response-file <file>   replay a canned model answer instead of calling a model");
+        to.println("  --attempts <n>           max repair attempts (default "
+                + RepairOptions.DEFAULT_ATTEMPTS + ", max 10)");
+        to.println("  --timeout <seconds>      build timeout per run (default "
+                + RepairOptions.DEFAULT_BUILD_TIMEOUT_SECONDS + ")");
+        to.println("  --ai-timeout <seconds>   model request timeout per attempt (default "
+                + RepairOptions.DEFAULT_AI_TIMEOUT_SECONDS + ")");
+        to.println("  --allow-test-changes     permit modifications under src/test/java");
+        to.println("  --json                   print the JSON report instead of the text summary");
+        to.println();
+        to.println("The patch is only written to target/compileloop/repairs/<run>/fix.patch.");
+        to.println("The build of the patched copy runs the patched code with your permissions.");
         to.println();
         to.println("Exit codes:");
-        to.println("  0  build passed");
-        to.println("  1  build failed (compile errors or failing tests)");
+        to.println("  0  build passed (or report rendered)");
+        to.println("  1  build failed, repair unsuccessful, or no progress made");
         to.println("  2  build timed out");
-        to.println("  3  the build could not be run (e.g. Maven not found), or the model was unavailable");
+        to.println("  3  the build could not be run, or the model was unreachable");
         to.println("  64 bad command-line usage");
     }
 }

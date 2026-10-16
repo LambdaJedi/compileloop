@@ -25,6 +25,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CliRepairTest {
@@ -72,6 +73,8 @@ class CliRepairTest {
         return new RepairResult(v, "run1", tmp, baseline(), attempts, patch, warnings, "message for " + v);
     }
 
+    // ---- parsing ---------------------------------------------------------
+
     @Test
     void parsesAllOptionsAndPassesThemOn() {
         int code = cli(result(Verdict.ALREADY_PASSING, null, List.of(), List.of())).run(new String[]{
@@ -81,6 +84,7 @@ class CliRepairTest {
         assertEquals(Cli.EXIT_PASS, code, err());
         assertEquals(Path.of("proj"), seenPath.get());
         RepairOptions o = seenOptions.get();
+        assertEquals(RepairOptions.PROVIDER_OLLAMA, o.provider());
         assertEquals("qwen2.5-coder", o.model());
         assertEquals("http://host:1234", o.ollamaUrl());
         assertEquals(2, o.attempts());
@@ -91,12 +95,17 @@ class CliRepairTest {
 
     @Test
     void usesSafeDefaults() {
-        cli(result(Verdict.ALREADY_PASSING, null, List.of(), List.of())).run(new String[]{"repair", "p", "--model", "m"});
+        cli(result(Verdict.ALREADY_PASSING, null, List.of(), List.of()))
+                .run(new String[]{"repair", "p", "--model", "m"});
 
         RepairOptions o = seenOptions.get();
+        assertEquals(RepairOptions.PROVIDER_OLLAMA, o.provider());
         assertEquals(RepairOptions.DEFAULT_OLLAMA_URL, o.ollamaUrl());
-        assertEquals(3, o.attempts());
+        assertEquals(RepairOptions.DEFAULT_ATTEMPTS, o.attempts());
         assertFalse(o.allowTestChanges(), "test files stay protected unless asked");
+        assertNull(o.openAiBaseUrl(), "no OpenAI base URL for provider=ollama");
+        assertNull(o.apiKey());
+        assertNull(o.apiKeyEnv());
     }
 
     @Test
@@ -105,8 +114,51 @@ class CliRepairTest {
                 .run(new String[]{"repair", "p", "--response-file", "answer.json"});
 
         assertEquals(Path.of("answer.json"), seenOptions.get().responseFile());
-        assertEquals(null, seenOptions.get().model());
+        assertNull(seenOptions.get().model());
     }
+
+    @Test
+    void openAiProviderOptionsAreParsed() {
+        cli(result(Verdict.ALREADY_PASSING, null, List.of(), List.of()))
+                .run(new String[]{"repair", "p", "--provider", "openai",
+                        "--openai-base-url", "http://localhost:3001/v1",
+                        "--api-key", "key-abc",
+                        "--model", "gpt-4o-mini"});
+
+        RepairOptions o = seenOptions.get();
+        assertEquals(RepairOptions.PROVIDER_OPENAI, o.provider());
+        assertEquals("http://localhost:3001/v1", o.openAiBaseUrl());
+        assertEquals("key-abc", o.apiKey());
+        assertNull(o.apiKeyEnv());
+        assertEquals("gpt-4o-mini", o.model());
+    }
+
+    @Test
+    void apiKeyEnvIsPreferredForTheOpenAiProvider() {
+        cli(result(Verdict.ALREADY_PASSING, null, List.of(), List.of()))
+                .run(new String[]{"repair", "p", "--provider", "openai",
+                        "--openai-base-url=http://localhost:3001/v1",
+                        "--api-key-env=FREELLMAPI_KEY",
+                        "--model", "gpt-4o-mini"});
+
+        RepairOptions o = seenOptions.get();
+        assertEquals("FREELLMAPI_KEY", o.apiKeyEnv());
+        assertNull(o.apiKey());
+    }
+
+    @Test
+    void modelAndResponseFileAreAllowedTogether() {
+        // The response file bypasses the provider, so the model name is
+        // accepted but ignored. This used to be a usage error; it is not one
+        // any more because providers and the file no longer conflict.
+        cli(result(Verdict.ALREADY_PASSING, null, List.of(), List.of()))
+                .run(new String[]{"repair", "p", "--model", "m", "--response-file", "f"});
+
+        assertEquals(Path.of("f"), seenOptions.get().responseFile());
+        assertEquals("m", seenOptions.get().model());
+    }
+
+    // ---- usage errors ----------------------------------------------------
 
     @Test
     void rejectsBadUsage() {
@@ -116,23 +168,46 @@ class CliRepairTest {
                 {"repair", "--model", "m"},
                 {"repair", "p", "q", "--model", "m"},
                 {"repair", "p", "--model"},
-                {"repair", "p", "--model", "m", "--response-file", "f"},
                 {"repair", "p", "--model", "m", "--attempts", "0"},
                 {"repair", "p", "--model", "m", "--attempts", "11"},
                 {"repair", "p", "--model", "m", "--attempts", "many"},
                 {"repair", "p", "--model", "m", "--timeout", "-5"},
                 {"repair", "p", "--model", "m", "--bogus"},
+                // provider-specific validation
+                {"repair", "p", "--provider", "gemini", "--model", "m"},
+                {"repair", "p", "--provider", "openai", "--model", "m", "--api-key", "k"},
+                {"repair", "p", "--provider", "openai", "--model", "m",
+                        "--openai-base-url", "http://localhost:3001/v1"},
+                {"repair", "p", "--provider", "openai",
+                        "--openai-base-url", "http://localhost:3001/v1", "--api-key", "k"},
+                {"repair", "p", "--provider", "openai", "--model", "m",
+                        "--openai-base-url", "http://localhost:3001/v1",
+                        "--api-key", "k", "--api-key-env", "VAR"},
         };
         for (String[] args : bad) {
             outBuf.reset();
             errBuf.reset();
-            assertEquals(Cli.EXIT_USAGE, cli(result(Verdict.VERIFIED_CANDIDATE, null, List.of(), List.of())).run(args),
+            seenOptions.set(null);
+            assertEquals(Cli.EXIT_USAGE,
+                    cli(result(Verdict.VERIFIED_CANDIDATE, null, List.of(), List.of())).run(args),
                     String.join(" ", args));
             assertTrue(err().length() > 0, String.join(" ", args));
-            assertEquals(null, seenOptions.get() == null ? null : seenOptions.getAndSet(null),
+            assertNull(seenOptions.get(),
                     "nothing may run on bad usage: " + String.join(" ", args));
         }
     }
+
+    @Test
+    void responseFileBypassesTheProviderRequirements() {
+        // A response file is enough on its own, even under provider=openai.
+        // No model, no base URL, no key required.
+        cli(result(Verdict.ALREADY_PASSING, null, List.of(), List.of()))
+                .run(new String[]{"repair", "p", "--provider", "openai", "--response-file", "f"});
+
+        assertEquals(Path.of("f"), seenOptions.get().responseFile());
+    }
+
+    // ---- exit codes ------------------------------------------------------
 
     @Test
     void exitCodesFollowTheVerdict() {
@@ -142,11 +217,15 @@ class CliRepairTest {
                 .run(new String[]{"repair", "p", "--model", "m"}));
         assertEquals(Cli.EXIT_FAIL, cli(result(Verdict.NOT_FIXED, null, List.of(), List.of()))
                 .run(new String[]{"repair", "p", "--model", "m"}));
+        assertEquals(Cli.EXIT_FAIL, cli(result(Verdict.NO_PROGRESS, null, List.of(), List.of()))
+                .run(new String[]{"repair", "p", "--model", "m"}));
         assertEquals(Cli.EXIT_INFRA, cli(result(Verdict.AI_UNAVAILABLE, null, List.of(), List.of()))
                 .run(new String[]{"repair", "p", "--model", "m"}));
         assertEquals(Cli.EXIT_INFRA, cli(result(Verdict.INFRA_ERROR, null, List.of(), List.of()))
                 .run(new String[]{"repair", "p", "--model", "m"}));
     }
+
+    // ---- output ----------------------------------------------------------
 
     @Test
     void aFixIsReportedWithTheApplyCommandAndTheHonestSandboxWarning() {
@@ -216,7 +295,8 @@ class CliRepairTest {
     void aFailingActionIsReportedAsAnInfrastructureProblem() {
         Cli c = new Cli((d, t) -> null, (d, o) -> {
             throw new IOException("boom");
-        }, new PrintStream(outBuf, true, StandardCharsets.UTF_8), new PrintStream(errBuf, true, StandardCharsets.UTF_8));
+        }, new PrintStream(outBuf, true, StandardCharsets.UTF_8),
+                new PrintStream(errBuf, true, StandardCharsets.UTF_8));
 
         int code = c.run(new String[]{"repair", "p", "--model", "m"});
 
@@ -225,10 +305,13 @@ class CliRepairTest {
     }
 
     @Test
-    void helpMentionsRepairAndTheSafetyNotes() {
+    void helpMentionsBothProvidersAndTheSafetyNotes() {
         cli(result(Verdict.VERIFIED_CANDIDATE, null, List.of(), List.of())).run(new String[]{"--help"});
 
         assertTrue(out().contains("compileloop repair"));
+        assertTrue(out().contains("--provider"));
+        assertTrue(out().contains("--openai-base-url"));
+        assertTrue(out().contains("--api-key-env"));
         assertTrue(out().contains("--allow-test-changes"));
         assertTrue(out().contains("with your permissions"));
         assertNotNull(out());
