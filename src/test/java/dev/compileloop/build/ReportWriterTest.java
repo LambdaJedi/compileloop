@@ -1,12 +1,16 @@
 package dev.compileloop.build;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -43,7 +47,6 @@ class ReportWriterTest {
         assertTrue(json.contains("\"column\": 13"));
         assertTrue(json.contains("\"testSummary\": null"));
         assertTrue(json.contains("\"notes\": []"));
-        // Windows backslashes in the project path must be escaped
         assertTrue(json.contains("C:\\\\Users\\\\Mdu\\\\proj"));
     }
 
@@ -85,9 +88,9 @@ class ReportWriterTest {
     @Test
     void specialCharactersAreEscaped() {
         ParsedBuild parsed = new ParsedBuild(
-                java.util.List.of(new ParsedBuild.CompileError("A.java", 1, 2,
+                List.of(new ParsedBuild.CompileError("A.java", 1, 2,
                         "say \"hi\"\nline2\ttab \\ back \u0001", DiagnosticCategory.OTHER_COMPILE_ERROR, "raw")),
-                java.util.List.of(), java.util.Optional.empty());
+                List.of(), Optional.empty());
 
         String json = ReportWriter.toJson(result(BuildOutcome.FAIL, 1, "", parsed));
 
@@ -101,5 +104,51 @@ class ReportWriterTest {
 
         assertTrue(json.contains("\"timedOut\": true"));
         assertTrue(json.contains("stopped at the time limit"));
+    }
+
+    @Test
+    void reportTxtIsWrittenNextToJson(@TempDir Path dir) throws IOException {
+        Files.writeString(dir.resolve("build.log"), "fake log");
+        BuildResult r = new BuildResult("mvn -B test", BuildOutcome.PASS, 0, false,
+                Instant.parse("2026-10-12T11:55:00Z"), 3700, dir.resolve("build.log"), "",
+                ParsedBuild.empty(), Path.of("proj"), "20261012T115500Z-3f9a1c", dir);
+
+        ReportWriter.write(r);
+
+        assertTrue(Files.isRegularFile(dir.resolve(ReportWriter.FILE_NAME)), "report.json expected");
+        assertTrue(Files.isRegularFile(dir.resolve(ReportWriter.TEXT_FILE_NAME)), "report.txt expected");
+        String text = Files.readString(dir.resolve(ReportWriter.TEXT_FILE_NAME));
+        assertTrue(text.contains("CompileLoop: mvn -B test"));
+        assertTrue(text.contains("Result: PASS"));
+    }
+
+    @Test
+    void unrecognizedLinesAppearInJson() {
+        ParsedBuild p = new ParsedBuild(List.of(), List.of(), Optional.empty(),
+                List.of("[ERROR] totally novel error"));
+
+        String json = ReportWriter.toJson(result(BuildOutcome.FAIL, 1, "", p));
+
+        assertTrue(json.contains("\"unrecognized\": ["));
+        assertTrue(json.contains("[ERROR] totally novel error"));
+        assertTrue(json.contains("did not match any known diagnostic pattern"));
+    }
+
+    @Test
+    void writeIsNoOpWhenThereIsNoRunDirectory() throws IOException {
+        BuildResult r = new BuildResult("mvn -B test", BuildOutcome.START_ERROR, -1, false,
+                Instant.parse("2026-10-12T11:55:00Z"), 2, null, "boom", ParsedBuild.empty(),
+                Path.of("proj"), null, null);
+
+        ReportWriter.write(r);  // must not throw
+    }
+
+    @Test
+    void emptyUnrecognizedRendersAsEmptyArray() throws IOException {
+        String json = ReportWriter.toJson(
+                result(BuildOutcome.PASS, 0, "", ParsedBuild.empty()));
+
+        assertTrue(json.contains("\"unrecognized\": []"));
+        assertEquals(-1, json.indexOf("\"unrecognized\": null"));
     }
 }

@@ -15,7 +15,8 @@ import java.util.Map;
 /**
  * Builds the machine-readable report for a run. No JSON library: the report is
  * small and its shape is fixed, so a tiny serializer keeps the project free of
- * dependencies.
+ * dependencies. Also writes the human-readable text report ({@link TextReport})
+ * alongside the JSON, so a stored run can be reviewed later without the log.
  *
  * The report states only what was observed. A failed build with nothing
  * recognised is reported as exactly that, never as "no problems".
@@ -23,17 +24,21 @@ import java.util.Map;
 public final class ReportWriter {
 
     public static final String FILE_NAME = "report.json";
+    public static final String TEXT_FILE_NAME = "report.txt";
     private static final int DETAIL_MAX_CHARS = 2000;
 
     private ReportWriter() {
     }
 
-    /** Writes report.json into the run directory. No-op if there is no run directory. */
+    /** Writes report.json and report.txt into the run directory. No-op if there is no run dir. */
     public static void write(BuildResult r) throws IOException {
         if (r.runDirectory() == null) {
             return;
         }
-        Files.writeString(r.runDirectory().resolve(FILE_NAME), toJson(r) + "\n", StandardCharsets.UTF_8);
+        Files.writeString(r.runDirectory().resolve(FILE_NAME), toJson(r) + "\n",
+                StandardCharsets.UTF_8);
+        Files.writeString(r.runDirectory().resolve(TEXT_FILE_NAME), TextReport.render(r),
+                StandardCharsets.UTF_8);
     }
 
     public static String toJson(BuildResult r) {
@@ -90,10 +95,17 @@ public final class ReportWriter {
         }
         m.put("testSummary", summary);
 
+        m.put("unrecognized", new ArrayList<>(p.unrecognized()));
+
         List<Object> notes = new ArrayList<>();
         if (r.outcome() == BuildOutcome.FAIL && !p.hasCompileErrors() && !p.hasTestFailures()) {
             notes.add("The build failed but no structured diagnostics were recognised; "
                     + "see the log file for the raw output.");
+        }
+        if (p.hasUnrecognizedErrors()) {
+            notes.add(p.unrecognized().size()
+                    + " [ERROR] line(s) did not match any known diagnostic pattern; "
+                    + "they are listed under 'unrecognized'.");
         }
         if (r.infrastructureFailure()) {
             notes.add("The build could not be run or completed; this says nothing about the "
